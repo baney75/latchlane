@@ -27,3 +27,12 @@ jobs:
       - run: uv sync --extra test
       - run: uv run --with playwright playwright install --with-deps chromium
       - run: uv run --with playwright python tests/browser_check.py
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.13'
+      - run: uv export --format requirements-txt --no-dev --no-emit-project --output-file /tmp/requirements.txt
+      - run: uv run --with pip-audit pip-audit --disable-pip --no-deps -r /tmp/requirements.txt

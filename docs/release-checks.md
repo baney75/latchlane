@@ -18,6 +18,9 @@ copied into this repository, test output, package or screenshot.
 - A real Chromium flow adds a disposable key, changes mode, pairs an agent,
   approves one raw lease, and locks the vault. Layout checks cover 320, 390, 768
   and 1280 CSS pixels. Screenshots in this directory are fixture-only.
+- Dependency auditing caught vulnerable older cryptography wheels; the release
+  requires cryptography 50.0.1 or later within major version 50. CI includes a
+  dependency-audit gate. A clean advisory scan is point-in-time evidence only.
 - The skill passes the native skill validator. The wheel and source distribution
   build successfully. GitHub Actions repeats host tests on macOS, Windows and Linux
   with Python 3.11 and 3.13, plus a Linux Chromium flow.

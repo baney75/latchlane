@@ -9,7 +9,14 @@ description = "Your keys. Your agents. Your call. A private credential broker an
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-dependencies = ["cryptography>=46,<48", "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "platformdirs>=4,<5", "filelock>=3.18,<4"]
+dependencies = [
+    "cryptography>=50.0.1,<51",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "httpx>=0.28,<1",
+    "platformdirs>=4,<5",
+    "filelock>=3.18,<4",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "pytest-cov>=6,<8"]
