@@ -127,3 +127,31 @@ def test_explicit_initial_mode(tmp_path):
     assert c.get('/api/status').json()['initial_mode']=='yolo'
     assert c.post('/api/init',json={'password':PASSWORD},headers=HEAD|{'X-Setup-Token':'fixture'}).status_code==200
     assert c.get('/api/owner').json()['mode']=='yolo'
+
+def test_failed_mode_save_does_not_grant_access(setup,monkeypatch):
+    import latchlane.vault as storage
+    app,c,a,path=setup
+    actual=storage.atomic_write
+    monkeypatch.setattr(storage,'atomic_write',lambda *a,**k:(_ for _ in ()).throw(OSError('fixture disk full')))
+    with pytest.raises(OSError):c.post('/api/mode',json={'mode':'yolo'},headers=HEAD)
+    assert app.state.vault.data['mode']=='ask'
+    disk=Vault(path);disk.unlock(PASSWORD);assert disk.data['mode']=='ask'
+    monkeypatch.setattr(storage,'atomic_write',actual)
+    assert req(a,kind='lease',path='/').json()['status']=='pending'
+
+def test_failed_approval_save_does_not_authorize(setup,monkeypatch):
+    import latchlane.vault as storage
+    app,c,a,path=setup
+    rid=req(a,kind='lease',path='/').json()['id']
+    actual=storage.atomic_write
+    monkeypatch.setattr(storage,'atomic_write',lambda *a,**k:(_ for _ in ()).throw(OSError('fixture disk full')))
+    with pytest.raises(OSError):c.post('/api/requests/'+rid+'/decision',json={'approve':True},headers=HEAD)
+    monkeypatch.setattr(storage,'atomic_write',actual)
+    assert a.post('/api/requests/'+rid+'/consume').status_code==202
+
+def test_failed_key_save_is_not_visible(setup,monkeypatch):
+    import latchlane.vault as storage
+    app,c,a,path=setup
+    monkeypatch.setattr(storage,'atomic_write',lambda *a,**k:(_ for _ in ()).throw(OSError('fixture disk full')))
+    with pytest.raises(OSError):c.post('/api/keys',json={'name':'unsaved','value':SECRET,'origin':'https://api.example.com'},headers=HEAD)
+    assert 'unsaved' not in app.state.vault.data['keys']

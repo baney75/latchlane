@@ -1,150 +1,91 @@
-# Latchlane
+<p align="center">
+  <img src="docs/banner.svg" alt="Latchlane — Your keys. Your agents. Your call." width="880">
+</p>
 
-**Your keys. Your agents. Your call.**
+<p align="center">
+  An encrypted API-key vault that asks before your agent acts.
+  <br>
+  Capture a key locally. Pair your agent. Decide what it can do.
+</p>
 
-A private home for API keys, with an owner console, a CLI, an MCP server, and an agent skill. Copy a key into your vault, choose how much your agents should ask, and connect your devices over Tailscale.
+<p align="center">
+  <a href="https://github.com/baney75/latchlane/actions/workflows/test.yml"><img src="https://github.com/baney75/latchlane/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/baney75/latchlane/releases"><img src="https://img.shields.io/github/v/release/baney75/latchlane?include_prereleases&color=245c45" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-245c45" alt="MIT license"></a>
+</p>
 
-![Latchlane owner console](docs/console.png)
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="docs/getting-started.md">Guide</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="https://github.com/baney75/latchlane/issues">Help & feedback</a>
+</p>
 
-## Let your agent set it up
+## A key should not become a chat message
 
-Copy this into your agent:
+Latchlane keeps API keys in a vault on a computer you control. Agents request an operation through its CLI or MCP server; the broker attaches the credential and calls the provider. You see who is asking, what they want to do, and why.
 
-> Set up Latchlane from https://github.com/baney75/latchlane. Read its README, SECURITY.md, and skills/latchlane/SKILL.md before running anything. Install the CLI and skill, start the owner console, and guide me through creating my vault. Keep Always ask enabled unless I explicitly choose another mode. Have me enter my passphrase and keys locally, never in chat. Ask whether I want Tailscale sync; if I do, guide me through account creation or browser sign-in and pair my devices. Verify setup with a disposable test credential. Do not import existing keys, enable unattended unlocking, expose a public endpoint, or change unrelated Tailscale routes without my instruction.
+The owner console handles clipboard capture, approvals, and revocation. Optional Tailscale access connects your other devices to the same vault. No hosted Latchlane account, telemetry, or macOS Keychain dependency.
 
-## Start here
+## Get started
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Give your agent this prompt:
+
+```text
+Set up Latchlane using https://github.com/baney75/latchlane
+and its skills/latchlane/SKILL.md. Install the CLI and skill,
+then guide me through creating a vault and pairing my agent.
+Keep Always ask on unless I choose otherwise. I will enter
+passphrases and keys locally, never in chat. Ask whether I
+want to connect my other devices through Tailscale.
+```
+
+Or start it yourself with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+:
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.1.0'
+uv tool install 'git+https://github.com/baney75/latchlane@v0.1.1'
 latchlane start
 ```
 
-Your browser opens the setup screen. Create a passphrase, then add your first key. The passphrase is not stored by default. Keep it in your password manager; there is no reset backdoor.
+Your browser opens the vault setup. Create a passphrase, choose **Add a key**, name it, and choose **Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when the form is complete. Browsers that block clipboard watching offer a masked paste field. [Continue to agent pairing →](docs/getting-started.md#pair-an-agent)
 
-To install the agent skill:
+## You choose how often agents ask
 
-```sh
-latchlane install-skill
-```
+| Mode | Agent access |
+| :--- | :--- |
+| **Always ask** · installed default | You approve each use. Approval expires after five minutes and works once. |
+| **Auto approve** | Only exact GET routes you previously trusted run without a prompt. Everything else requires approval. |
+| **YOLO** | Paired agents can use every key without asking, including raw-key access. |
 
-This installs into `~/.codex/skills/latchlane`. Other agents can read the same [SKILL.md](skills/latchlane/SKILL.md), or use `--directory` to choose their skill folder.
+Agents cannot change the mode or approve themselves. The broker enforces the policy; a prompt is not the security boundary.
 
-### Three modes. One owner.
+![The Latchlane owner console with permission controls and a saved example key](docs/console.png)
 
-| Mode | What happens |
-| --- | --- |
-| **Always ask** · default | Each use needs your approval in the owner console. Approvals expire after five minutes and can be consumed once. |
-| **Auto approve** | Exact GET routes you have marked as trusted can run without a prompt. Other operations and raw-key access require approval. An agent cannot label its own request “safe.” |
-| **YOLO** | Paired agents can use all stored keys without prompts, including raw-key access. Only choose this for agents you trust. |
+## Use it from your tools
 
-The broker enforces these modes. Agent credentials cannot change modes, approve requests, add keys, or pair other agents. Mode changes cancel outstanding requests. Revoking an agent blocks its future broker access.
-
-**The trust boundary matters:** a process that can read the vault host’s memory, owner browser session, or unattended unlock file can bypass this boundary. For untrusted agents, run the vault on a separate host or OS account. A raw key already released to a client cannot be recalled; rotate it at the provider when necessary.
-
-### Add a key without putting it in chat
-
-1. Choose **Add a key**. Enter a name and the provider’s exact API origin.
-2. Choose **Watch next copy**, copy the API key, and return to the vault window. Supported browsers save the next changed value automatically when the form is complete.
-3. On browsers that block watching, use **Paste from clipboard** or paste into the masked field and choose **Encrypt & save**.
-
-Keys are encrypted with AES-256-GCM. The browser attempts to clear the copied value after a successful save, preserving newer content where possible. Browser clipboard APIs cannot perform an atomic compare-and-clear; clipboard history and OS sync can retain copies. Mobile browsers generally require an explicit paste gesture.
-
-## Pair an agent
-
-In the owner console choose **Pair an agent**, then run:
-
-```sh
-latchlane pair http://127.0.0.1:9473 --name 'My coding agent'
-```
-
-Enter the five-minute pairing code in the hidden terminal prompt. The CLI saves its access credential privately. Do not paste pairing codes into model conversations.
-
-Use the broker for API calls so the raw key stays on the vault host:
+After [pairing](docs/getting-started.md#pair-an-agent), an agent can list key names and make a request:
 
 ```sh
 latchlane keys
 latchlane request my-service /v1/models --purpose 'List available models'
 ```
 
-For SDKs that require an environment variable:
+The [MCP integration](docs/getting-started.md#mcp) exposes the same brokered workflow. For a trusted SDK that needs an environment variable, [`latchlane run`](docs/getting-started.md#pair-an-agent) can release a key directly to one child process. That process can read or retain it.
 
-```sh
-latchlane run --purpose 'Run my trusted local client' my-service SERVICE_API_KEY -- python client.py
-```
+## One vault, across your devices
 
-This requests raw-key access and passes the value directly to the child process. The CLI does not print it, but **the child can read, retain, or log it**. Prefer the API broker when possible.
+Run `latchlane connect` for guided Tailscale installation, browser sign-in, and private HTTPS. Use the console from a phone or pair an agent on another computer. This connects to **one online vault host**; it does not make offline copies of your secrets.
 
-### MCP
+The host and CLI support macOS, Windows, and Linux. Phones and tablets use the browser console with an explicit paste fallback. [Device setup and requirements →](docs/devices.md)
 
-After pairing, add this stdio server to an MCP-capable agent:
+## Know what protects your keys
 
-```json
-{
-  "mcpServers": {
-    "latchlane": {
-      "command": "latchlane",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+Vault contents use AES-256-GCM with a passphrase-derived scrypt key. The passphrase is not saved by default. Agent pairing is revocable, and broker requests stay within the provider origin you configured.
 
-The tools list key names, request a brokered API operation, and consume an approved request. The MCP surface never provides a raw-key retrieval tool.
+A process with access to the host’s memory or owner session can bypass broker permissions. Keep untrusted agents on a separate host or OS account. Clipboard history may retain copied secrets. Optional unattended unlocking trades passphrase protection for host access controls.
 
-## Your devices, connected
+This is an early release, with cross-platform CI and adversarial regression tests, **not an independently audited secrets manager**. Read the [security boundaries](SECURITY.md) before storing production credentials.
 
-```sh
-latchlane connect
-```
+---
 
-The guide checks for Tailscale, links to account creation and installation if needed, invokes its browser sign-in, and configures **private Tailscale Serve HTTPS on port 8447**. It preserves existing routes and never enables Funnel.
-
-Open the resulting private address on a phone, tablet, or another computer signed into your tailnet. Sign into the owner console with your passphrase, or pair a remote agent:
-
-```sh
-latchlane pair https://your-device.your-tailnet.ts.net:8447 --name 'Laptop agent'
-```
-
-Every device sees the same live vault and permissions. **Sync uses one online host, not offline replicas.** No credential database or decryption key is distributed to agent devices. The host must stay online and unlocked for agent operations.
-
-Tailscale handles identity-provider sign-in in its own app/browser. Its separate [app OAuth](https://tailscale.com/docs/features/oauth-apps) is currently alpha and restricted to users within the app’s tailnet; Latchlane does not pretend there is a universal public OAuth app. You do not give Latchlane a Tailscale OAuth client secret. See [device setup](docs/devices.md).
-
-## Where it runs
-
-| Device | Role |
-| --- | --- |
-| macOS, Windows, Linux · Python 3.11+ | Vault host, CLI, or agent client |
-| iPhone, iPad, Android, Chromebook | Owner console through a current browser and Tailscale; explicit paste fallback |
-| Headless server | Host using `latchlane init`, then `latchlane start --no-open` |
-| Other devices | Browser access if HTTPS and Tailscale are supported; no claim of a native host everywhere |
-
-Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.1 is an early public release, not an independently audited secrets manager.
-
-## Local options
-
-`latchlane doctor` checks readiness without revealing keys. `latchlane capture NAME --origin https://api.example.com` opens a named capture form. `latchlane start --port PORT` chooses a different local port.
-
-Advanced users can deliberately choose unattended operation:
-
-```sh
-latchlane init --unattended --mode yolo
-```
-
-This stores a random unlock passphrase in a local permission-restricted file. It encrypts the vault on disk but does **not** protect against someone who can read both files. It is optional, never the installation default. Keep the host isolated from untrusted agents. To open the owner console for an unattended vault, use `latchlane owner` locally; this opens a short-lived owner session without printing a credential.
-
-Storage lives in the OS user-data directory reported by `platformdirs`, outside the repository. `LATCHLANE_HOME` selects a different private profile. Keep the host profile separate from an untrusted agent profile. Never sync `unattended.key` or an agent credential through Git.
-
-## Develop and verify
-
-```sh
-git clone https://github.com/baney75/latchlane
-cd latchlane
-uv sync --extra test
-uv run pytest
-```
-
-Read [SECURITY.md](SECURITY.md) for boundaries and reporting, [architecture](docs/architecture.md) for the design, and [release checks](docs/release-checks.md) for what was actually tested. No telemetry, analytics, or hosted account is part of Latchlane.
-
-MIT licensed.
+[Architecture](docs/architecture.md) · [Test evidence](docs/release-checks.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)

@@ -48,3 +48,44 @@ def test_cli_and_mcp(tmp_path):
         assert 'error' in json.loads(r.stdout) and 'only-a-fixture-value' not in r.stdout
     finally:
         proc.terminate();proc.wait(timeout=10)
+
+@pytest.mark.parametrize('status',[200,423,503])
+def test_pair_preserves_existing_credential(tmp_path, monkeypatch, status):
+    from argparse import Namespace
+    from latchlane import cli
+    monkeypatch.setenv('LATCHLANE_HOME',str(tmp_path))
+    path=tmp_path/'agent.local.json'
+    original=json.dumps({'url':'http://127.0.0.1:19474','token':'fixture-old-token'}).encode()
+    atomic_write(path,original)
+    class Probe:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def get(self,*args,**kwargs):return httpx.Response(status)
+    monkeypatch.setattr(cli.httpx,'Client',Probe)
+    monkeypatch.setattr(cli.getpass,'getpass',lambda *args:pytest.fail('Must preserve existing pairing without prompting'))
+    with pytest.raises(ValueError):cli.pair(Namespace(url='http://127.0.0.1:19474',name='Fixture'))
+    assert path.read_bytes()==original
+
+@pytest.mark.parametrize('replacement_status',[200,403])
+def test_pair_replaces_revoked_only_after_success(tmp_path, monkeypatch, replacement_status):
+    from argparse import Namespace
+    from latchlane import cli
+    monkeypatch.setenv('LATCHLANE_HOME',str(tmp_path))
+    path=tmp_path/'agent.local.json'
+    original=json.dumps({'url':'http://127.0.0.1:19474','token':'fixture-old-token'}).encode()
+    atomic_write(path,original)
+    class Probe:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def get(self,*args,**kwargs):return httpx.Response(401)
+        def post(self,*args,**kwargs):return httpx.Response(replacement_status,json={'token':'fixture-new-token'})
+    monkeypatch.setattr(cli.httpx,'Client',Probe)
+    monkeypatch.setattr(cli.getpass,'getpass',lambda *args:'fixture-pair-code')
+    if replacement_status==200:
+        cli.pair(Namespace(url='http://127.0.0.1:19474',name='Fixture'))
+        assert json.loads(path.read_bytes())['token']=='fixture-new-token'
+    else:
+        with pytest.raises(ValueError):cli.pair(Namespace(url='http://127.0.0.1:19474',name='Fixture'))
+        assert path.read_bytes()==original

@@ -1,4 +1,6 @@
 """Local owner console and authenticated agent broker."""
+import copy
+from contextlib import contextmanager
 import hashlib
 import hmac
 import secrets
@@ -67,6 +69,25 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", *hosts}
     v = app.state.vault
 
+    @contextmanager
+    def transaction():
+        # Preserve the pre-operation authorization state if persistence fails.
+        # Login attempt counters deliberately survive failed authentication.
+        with app.state.lock:
+            saved = (copy.deepcopy(v.data), v.key, v.salt,
+                     copy.deepcopy(app.state.pending), dict(app.state.invites),
+                     dict(app.state.sessions), app.state.bootstrap)
+            try:
+                yield
+            except Exception:
+                (v.data, v.key, v.salt, app.state.pending, app.state.invites,
+                 app.state.sessions, app.state.bootstrap) = saved
+                raise
+
+    def discard_owner_ticket():
+        try: (directory / "owner-ticket.local.json").unlink(missing_ok=True)
+        except OSError: pass  # Revoked token is harmless; cleanup is best effort.
+
     @app.middleware("http")
     async def boundary(request, call_next):
         if request.headers.get("host") not in allowed_hosts:
@@ -134,24 +155,21 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
         return FileResponse(STATIC / name)
 
     @app.get("/api/status")
-    def status(): return {"initialized": v.path.exists(), "locked": v.data is None, "version": "0.1.0", "initial_mode": initial_mode}
+    def status(): return {"initialized": v.path.exists(), "locked": v.data is None, "version": "0.1.1", "initial_mode": initial_mode}
 
     @app.post("/api/init")
     def initialize(body: Password, request: Request):
-        with app.state.lock:
+        with transaction():
             if not hmac.compare_digest(request.headers.get("x-setup-token", ""), app.state.bootstrap):
                 raise HTTPException(403, "Open the setup window from latchlane start.")
-            v.initialize(body.password)
-            if initial_mode != "ask":
-                v.data["mode"] = initial_mode
-                v.save()
+            v.initialize(body.password, mode=initial_mode)
             app.state.bootstrap = secrets.token_urlsafe(32)
-            (directory / "owner-ticket.local.json").unlink(missing_ok=True)
+            discard_owner_ticket()
             return session(request)
 
     @app.post("/api/login")
     def login(body: Password, request: Request):
-        with app.state.lock:
+        with transaction():
             now = time.time()
             app.state.login_attempts = [t for t in app.state.login_attempts if t > now - 60]
             if len(app.state.login_attempts) >= 5: raise HTTPException(429, "Wait a minute before trying again.")
@@ -161,24 +179,24 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/local-session")
     def local_session(request: Request):
-        with app.state.lock:
+        with transaction():
             require_unlocked()
             if not hmac.compare_digest(request.headers.get("x-setup-token", ""), app.state.bootstrap):
                 raise HTTPException(403, "Open the owner window locally.")
             app.state.bootstrap = secrets.token_urlsafe(32)
-            (directory / "owner-ticket.local.json").unlink(missing_ok=True)
+            discard_owner_ticket()
             return session(request)
 
     @app.post("/api/lock")
     def lock(request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             v.lock(); app.state.sessions.clear(); app.state.pending.clear(); app.state.invites.clear()
             return {"ok": True}
 
     @app.get("/api/owner")
     def dashboard(request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             clean = [{k: val for k, val in item.items() if k != "value"} | {"name": name} for name, item in v.data["keys"].items()]
             pending = [{"id": rid, "operation": r["op"], "agent": v.data["clients"].get(r["client"], {}).get("name", "revoked"), "expires": r["expires"]} for rid, r in app.state.pending.items() if r["status"] == "pending" and r["expires"] > time.time()]
@@ -186,7 +204,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/mode")
     def mode(body: Mode, request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             if body.mode not in ("ask", "auto", "yolo"): raise HTTPException(422, "Unknown mode.")
             v.data["mode"] = body.mode
@@ -197,7 +215,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/keys")
     def add_key(body: KeyInput, request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             if body.name in v.data["keys"]: raise HTTPException(409, "Name exists. Use a new name to rotate safely.")
             if len(v.data["keys"]) >= 200: raise HTTPException(409, "Vault key limit reached.")
@@ -215,7 +233,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.delete("/api/keys/{name}")
     def delete_key(name: str, request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             if name not in v.data["keys"]: raise HTTPException(404)
             del v.data["keys"][name]
@@ -225,7 +243,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/invite")
     def invite(request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             code = secrets.token_urlsafe(24)
             app.state.invites = {digest(code): time.time() + 300}
@@ -233,7 +251,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/pair")
     def pair(body: PairInput):
-        with app.state.lock:
+        with transaction():
             require_unlocked()
             if app.state.invites.pop(digest(body.code), 0) < time.time(): raise HTTPException(403, "Pairing code expired or invalid.")
             if len(v.data["clients"]) >= 100: raise HTTPException(409, "Device limit reached.")
@@ -244,7 +262,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.delete("/api/clients/{ident}")
     def revoke(ident: str, request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             v.data["clients"].pop(ident, None)
             app.state.pending = {rid:r for rid,r in app.state.pending.items() if r["client"] != ident}
@@ -253,13 +271,13 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.get("/api/keys")
     def names(request: Request):
-        with app.state.lock:
+        with transaction():
             client(request)
             return {"keys": [{"name": n, "origin": d["origin"]} for n,d in v.data["keys"].items()], "mode": v.data["mode"], "revision": v.data["revision"]}
 
     @app.post("/api/requests")
     def request_use(body: Operation, request: Request):
-        with app.state.lock:
+        with transaction():
             ident = client(request)
             key = v.data["keys"].get(body.key)
             if not key: raise HTTPException(404, "Key not found.")
@@ -280,7 +298,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/requests/{rid}/decision")
     def decide(rid: str, body: Decision, request: Request):
-        with app.state.lock:
+        with transaction():
             owner(request)
             r = app.state.pending.get(rid)
             if not r or r["expires"] < time.time() or r["status"] != "pending": raise HTTPException(409, "Request expired or already decided.")
@@ -290,7 +308,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
 
     @app.post("/api/requests/{rid}/consume")
     def consume(rid: str, request: Request):
-        with app.state.lock:
+        with transaction():
             ident = client(request)
             r = app.state.pending.get(rid)
             if not r or r["client"] != ident: raise HTTPException(404, "Request not found.")

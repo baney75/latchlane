@@ -161,8 +161,20 @@ def connect(args):
 
 def pair(args):
     root=data_dir(); private_directory(root)
-    if (root/"agent.local.json").exists(): raise ValueError("An agent is already paired in this profile. Use a separate LATCHLANE_HOME for another identity.")
     url=broker_url(args.url)
+    existing = root / "agent.local.json"
+    if existing.exists():
+        current = json.loads(private_read(existing))
+        if broker_url(current["url"]) != url:
+            raise ValueError("This profile belongs to another vault. Use a separate LATCHLANE_HOME.")
+        try:
+            with httpx.Client(timeout=15, trust_env=False, follow_redirects=False) as c:
+                status = c.get(url + "/api/keys", headers={"Authorization": "Bearer " + current["token"], "X-Latchlane": "1"}).status_code
+        except httpx.HTTPError:
+            raise ValueError("Could not verify the existing pairing. Its credential was preserved.") from None
+        if status == 200: raise ValueError("This agent is already paired. Revoke it in the owner console before replacing it.")
+        if status != 401: raise ValueError("Unlock the existing vault and retry pairing. Its credential was preserved.")
+        print("The previous pairing was revoked. Enter a new code to reconnect.")
     code=getpass.getpass("Pairing code from owner console (hidden): ")
     try:
         with httpx.Client(timeout=15,trust_env=False,follow_redirects=False) as c:
@@ -186,7 +198,7 @@ def mcp():
             msg=json.loads(line)
             if "id" not in msg: continue
             method=msg.get("method")
-            if method=="initialize": result={"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"latchlane","version":"0.1.0"}}
+            if method=="initialize": result={"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"latchlane","version":"0.1.1"}}
             elif method=="ping": result={}
             elif method=="tools/list": result={"tools":tools}
             elif method=="tools/call":

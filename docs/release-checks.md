@@ -1,4 +1,4 @@
-# Version 0.1 verification
+# Version 0.1.1 verification
 
 The checks use disposable credentials and profiles. No private user vault was
 copied into this repository, test output, package or screenshot.
@@ -35,4 +35,16 @@ uses the installed Tailscale client and official account/install URLs.
 
 This was an implementation review and automated test pass, not an independent
 cryptographic audit. Read SECURITY.md for limits. Do not present this release as
-award-winning, certified, universally compatible, or immune to malicious local agents.
+certified, universally compatible, or immune to malicious local agents.
+
+## Adversarial regression checks
+
+A separate security reviewer reproduced failed policy and approval saves, then
+verified that HTTP errors leave no extra access active in memory. A post-rename
+directory fsync failure was also tested: the API result and saved policy agree.
+Regression tests cover these failures and rejected key writes.
+
+The onboarding review exercises revoked-agent reconnection and visible errors
+inside the key-capture dialog. Replacement pairing preserves the old credential
+until the broker accepts a new code. Browser checks verify that the error is
+inside the active dialog and is not covered by another element.

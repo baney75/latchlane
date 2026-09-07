@@ -4,7 +4,14 @@ const show = (id, yes=true) => $(id).classList.toggle('hidden', !yes);
 let initialized=false, currentMode='ask', chosenMode='ask', setupToken=location.hash.slice(1), watching=null, copiedValue=null, state=null;
 history.replaceState(null, '', location.pathname+location.search);
 const captureParams=new URLSearchParams(location.search);
-function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error);show('notice');setTimeout(()=>show('notice',false),6500);}
+function notice(text,error=false){
+ const dialog=document.querySelector('dialog[open]');
+ let target=$('notice');
+ if(dialog){target=dialog.querySelector('.dialog-notice');if(!target){target=document.createElement('div');target.className='dialog-notice';dialog.append(target);}}
+ target.textContent=text;target.setAttribute('role',error?'alert':'status');target.classList.toggle('error',error);target.classList.remove('hidden');
+ if(dialog)target.scrollIntoView({block:'nearest'});
+ setTimeout(()=>target.classList.add('hidden'),6500);
+}
 async function api(path,method='GET',body){
  const r=await fetch(path,{method,headers:{'Content-Type':'application/json','X-Latchlane':'1',...(setupToken?{'X-Setup-Token':setupToken}:{})},...(body?{body:JSON.stringify(body)}:{})});
  const data=await r.json(); if(!r.ok)throw new Error(data.detail||'Something went wrong. Try again.');return data;

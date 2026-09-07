@@ -7,7 +7,7 @@ description: Set up and use Latchlane to store API keys through local clipboard 
 
 Use the installed `latchlane` CLI. If missing, read the project's README and
 SECURITY.md at https://github.com/baney75/latchlane before installation. Install
-with `uv tool install 'git+https://github.com/baney75/latchlane@v0.1.0'` after reviewing
+with `uv tool install 'git+https://github.com/baney75/latchlane@v0.1.1'` after reviewing
 the source and environment. Use supported Python 3.11+ on macOS, Windows or Linux.
 Phones/tablets use the browser console through a Tailscale-connected host.
 

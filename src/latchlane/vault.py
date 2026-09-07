@@ -54,9 +54,14 @@ def atomic_write(path: Path, data: bytes):
             os.fsync(f.fileno())
         os.replace(tmp, path)
         if os.name != "nt":
-            d = os.open(path.parent, os.O_RDONLY)
-            try: os.fsync(d)
-            finally: os.close(d)
+            # The rename is already committed. A directory-fsync limitation must
+            # not report a rollback while leaving the new ciphertext on disk.
+            try:
+                d = os.open(path.parent, os.O_RDONLY)
+                try: os.fsync(d)
+                finally: os.close(d)
+            except OSError:
+                pass
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 
@@ -69,12 +74,13 @@ class Vault:
         self.salt = None
         self.data = None
 
-    def initialize(self, password):
+    def initialize(self, password, mode="ask"):
+        if mode not in ("ask", "auto", "yolo"): raise VaultError("Invalid mode.")
         if self.path.exists(): raise VaultError("A vault already exists.")
         if len(password) < 14: raise VaultError("Use a passphrase of at least 14 characters.")
         self.salt = secrets.token_bytes(16)
         self.key = self.derive(password, self.salt)
-        self.data = {"mode": "ask", "keys": {}, "clients": {}, "audit": [], "revision": 0}
+        self.data = {"mode": mode, "keys": {}, "clients": {}, "audit": [], "revision": 0}
         self.save()
 
     @staticmethod

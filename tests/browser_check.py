@@ -33,7 +33,16 @@ def main():
                 page.goto('http://127.0.0.1:19473')
                 page.locator('#password').fill('browser-fixture-passphrase');page.locator('#enter').click();page.locator('#dashboard').wait_for(state='visible')
                 assert page.locator('[data-mode="ask"]').get_attribute('aria-pressed')=='true'
-                page.locator('#add').click();page.locator('#key-name').fill('studio-ai');page.locator('#key-origin').fill('https://api.example.com');page.locator('#key-value').fill('dummy-browser-key-not-real');page.locator('#key-form summary').click();page.locator('#safe-paths').fill('/v1/models');page.locator('#key-form [type=submit]').click();page.locator('#key-dialog').wait_for(state='hidden')
+                page.locator('#add').click()
+                page.locator('#key-name').fill('invalid-origin')
+                page.locator('#key-origin').fill('http://api.example.com')
+                page.locator('#key-value').fill('disposable-invalid-fixture')
+                page.locator('#key-form [type=submit]').click()
+                alert=page.locator('#key-dialog .dialog-notice.error')
+                alert.wait_for(state='visible')
+                assert alert.get_attribute('role')=='alert'
+                assert alert.evaluate('(el) => { const r=el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); }')
+                page.locator('#key-name').fill('studio-ai');page.locator('#key-origin').fill('https://api.example.com');page.locator('#key-value').fill('dummy-browser-key-not-real');page.locator('#key-form summary').click();page.locator('#safe-paths').fill('/v1/models');page.locator('#key-form [type=submit]').click();page.locator('#key-dialog').wait_for(state='hidden')
                 page.locator('#keys strong').get_by_text('studio-ai',exact=True).wait_for()
                 assert 'dummy-browser-key-not-real' not in page.locator('body').inner_text()
                 page.locator('[data-mode="auto"]').click();page.locator('#confirm-mode').click();page.locator('[data-mode="auto"][aria-pressed="true"]').wait_for()
