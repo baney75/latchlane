@@ -2,6 +2,8 @@ from argparse import Namespace
 import json
 from pathlib import Path
 import socket
+import shlex
+import subprocess
 import time
 
 import httpx
@@ -36,7 +38,16 @@ def test_remote_app_never_starts_a_local_host(monkeypatch):
         raise AssertionError("remote failure must be visible")
 
 
-def test_open_app_uses_separate_profile_without_remote_debugging(tmp_path, monkeypatch):
+def test_open_app_uses_selected_browser_normal_profile(monkeypatch):
+    command = []
+    monkeypatch.setattr(desktop, "browser_path", lambda system=None: "/fixture/Vivaldi")
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **kwargs: command.extend(args))
+    desktop.open_app("http://127.0.0.1:19474/")
+    assert command == ["/fixture/Vivaldi", "--app=http://127.0.0.1:19474/", "--no-first-run", "--no-default-browser-check"]
+    assert not any(value.startswith("--user-data-dir=") for value in command)
+
+
+def test_open_app_uses_explicit_fixture_profile_without_remote_debugging(tmp_path, monkeypatch):
     command = []
     monkeypatch.setattr(desktop, "browser_path", lambda system=None: "/fixture/Vivaldi")
     monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **kwargs: command.extend(args))
@@ -106,25 +117,35 @@ def test_linux_default_browser_parses_quoted_exec_in_xdg_data_home(tmp_path, mon
     assert desktop.default_browser_path("Linux") == str(executable)
 
 
-def test_unsupported_default_browser_is_not_replaced(tmp_path, monkeypatch):
+def test_unsupported_default_browser_opens_through_os_default(tmp_path, monkeypatch):
     safari = tmp_path / "Safari"; safari.touch()
+    command = []
     monkeypatch.setattr(desktop, "default_browser_path", lambda system: str(safari))
-    try: desktop.browser_path("Darwin")
-    except ValueError as error: assert "will not substitute" in str(error)
-    else: raise AssertionError("unsupported default must not fall back")
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **kwargs: command.extend(args))
+    desktop.open_app("http://127.0.0.1:19474/", system="Darwin")
+    assert command == ["open", "http://127.0.0.1:19474/"]
+
+
+def test_unresolved_linux_default_opens_through_xdg_without_browser_substitution(monkeypatch):
+    command = []
+    monkeypatch.setattr(desktop, "default_browser_path", lambda system: None)
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **kwargs: command.extend(args))
+    desktop.open_app("http://127.0.0.1:19474/", system="Linux")
+    assert command == ["xdg-open", "http://127.0.0.1:19474/"]
 
 
 def test_mac_launcher_is_per_user_and_refuses_unrelated(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(desktop, "mac_icon", lambda resources: None)
-    launcher = desktop.mac_launcher("/stable/latchlane")
+    url = "http://127.0.0.1:19474"
+    launcher = desktop.mac_launcher("/stable/latchlane", url)
     executable = launcher / "Contents/MacOS/Latchlane"
     assert launcher == tmp_path / "Applications/Latchlane.app"
-    assert "/stable/latchlane app" in executable.read_text()
+    assert shlex.split(executable.read_text().splitlines()[1]) == ["exec", "/stable/latchlane", "app", "--url", url, "$@"]
     original = (launcher / "Contents/Info.plist").read_bytes()
     executable.write_text("unrelated")
     try:
-        desktop.mac_launcher("/stable/latchlane")
+        desktop.mac_launcher("/stable/latchlane", url)
     except ValueError as error:
         assert "unrelated" in str(error)
     else:
@@ -136,8 +157,48 @@ def test_mac_launcher_is_per_user_and_refuses_unrelated(tmp_path, monkeypatch):
 def test_windows_launcher_rejects_hostile_command_path(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     try:
-        desktop.windows_launcher(r"C:\safe&bad\latchlane.exe")
+        desktop.windows_launcher(r"C:\safe&bad\latchlane.exe", "http://127.0.0.1:19474")
     except ValueError as error:
         assert "safely" in str(error)
     else:
         raise AssertionError("hostile path must not become a cmd launcher")
+
+
+def test_windows_launcher_upgrades_own_launcher_and_persists_url(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    launcher = tmp_path / "Microsoft/Windows/Start Menu/Programs/Latchlane.cmd"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text('@echo off\r\n"C:\\stable\\latchlane.exe" app %*\r\n')
+    url = "http://127.0.0.1:19474"
+    assert desktop.windows_launcher(r"C:\stable\latchlane.exe", url) == launcher
+    assert subprocess.list2cmdline([r"C:\stable\latchlane.exe", "app", "--url", url]) + " %*" in launcher.read_text()
+
+
+def test_linux_launcher_persists_custom_url_uses_xdg_data_home_and_icon(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data home"))
+    url = "http://127.0.0.1:19474"
+    launcher = desktop.linux_launcher("/stable/latchlane with space", url)
+    assert launcher == tmp_path / "data home/applications/latchlane.desktop"
+    contents = launcher.read_text()
+    assert 'Exec="/stable/latchlane with space" app --url "http://127.0.0.1:19474"' in contents
+    assert "Icon=" + str(Path(desktop.__file__).with_name("static") / "icons/mark-512.png") in contents
+
+
+def test_install_app_persists_validated_custom_url(monkeypatch):
+    installed = []
+    monkeypatch.setattr(desktop, "installed_cli", lambda: "/stable/latchlane")
+    monkeypatch.setattr(desktop.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(desktop, "mac_launcher", lambda cli, url: installed.append((cli, url)) or Path("/fixture/Latchlane.app"))
+    desktop.install_app(Namespace(url="http://127.0.0.1:19474", no_open=True))
+    assert installed == [("/stable/latchlane", "http://127.0.0.1:19474")]
+
+
+def test_launchers_refuse_custom_url_with_space_or_metacharacter(tmp_path, monkeypatch):
+    monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
+    for value in ("http://127.0.0.1:9473 bad", "http://127.0.0.1:9473;touch"):
+        try:
+            desktop.linux_launcher("/stable/latchlane", value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsafe custom URL must not become a launcher argument")

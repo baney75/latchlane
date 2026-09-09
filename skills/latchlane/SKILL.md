@@ -7,18 +7,22 @@ description: Set up and use Latchlane to store API keys through local clipboard 
 
 Use the installed `latchlane` CLI. If missing, read the project's README and
 SECURITY.md at https://github.com/baney75/latchlane before installation. Install
-with `uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'` after reviewing
+with `uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'` after reviewing
 the source and environment. Use supported Python 3.11+ on macOS, Windows or Linux.
 Phones/tablets use the browser console through a Tailscale-connected host.
 
 ## First setup
 
-For a first-time local setup, run `latchlane install-app`. It installs and opens the
-dedicated Latchlane launcher in one command. The user enters their passphrase in the
-owner screen, never in chat. Use `latchlane app` for later launches. Default to
+For a first-time local setup, run `latchlane install-app`. It installs a per-user
+launcher and opens Latchlane in the normal supported Chromium browser profile. The
+user enters their passphrase in the owner screen, never in chat. Use `latchlane app`
+for later launches. Default to
 **Always ask**. Switch to Auto approve or YOLO only on an explicit user choice; the
 modes are enforced by the broker. Never use owner credentials to bypass an agent
 approval. Use `latchlane start` only when the user needs a technical host process.
+Do not copy, migrate, print, or request a key, passphrase, pairing code, browser cookie,
+or agent credential. Existing browser cookies and extensions stay in the selected normal
+profile; that is a local-device trust boundary, not a credential migration.
 
 If the user explicitly requests unattended operation, explain that its local
 unlock file grants vault access to the same OS user. `latchlane init --unattended`

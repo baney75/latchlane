@@ -28,6 +28,7 @@
       >
       <div class="header-right">
         <span class="private"><i></i> Private by design</span
+        ><button id="install-help" class="quiet">Install help</button
         ><button id="retry" class="quiet hidden">Retry connection</button
         ><button id="logout" class="quiet hidden">Sign out</button
         ><button id="lock" class="quiet hidden">Lock vault</button>
@@ -95,6 +96,9 @@
             Locking the vault or restarting its host requires your passphrase
             again. Your passphrase is never saved here.
           </p>
+          <button id="welcome-install-help" class="text-button" type="button">
+            Install this console on this device ↗
+          </button>
         </div>
       </section>
       <section id="dashboard" class="hidden">
@@ -180,7 +184,7 @@
               <span class="eyebrow">TAKE IT WITH YOU</span>
               <h2>One vault. Your devices.</h2>
               <p>
-                Install Latchlane as a private app window. It still connects
+                Save this console as an app in your browser. It still connects
                 only to this vault host.
               </p>
               <button id="install-app" class="text-button">
@@ -423,40 +427,30 @@
       </p>
       <button class="primary wide" data-close="mcp-dialog">Got it</button>
     </dialog>
-    <dialog id="app-dialog">
+    <dialog id="app-dialog" aria-labelledby="app-dialog-title">
       <div class="dialog-head">
         <span class="eyebrow">YOUR PRIVATE APP WINDOW</span
         ><button class="close" data-close="app-dialog" aria-label="Close">
           ×
         </button>
       </div>
-      <h2>Install Latchlane.</h2>
-      <p>
-        Installing opens Latchlane in its own app window, so you do not need to
-        keep a browser tab around. It still needs this vault host online.
-      </p>
-      <ol class="setup-steps">
-        <li>
-          <strong>Chrome or Edge</strong>
-          <p>
-            Choose the install icon in the address bar, or use the browser menu
-            and choose Install app.
-          </p>
-        </li>
-        <li>
-          <strong>Safari on iPhone or iPad</strong>
-          <p>
-            Open this private address in Safari, choose Share, then Add to Home
-            Screen.
-          </p>
-        </li>
-        <li>
-          <strong>Safari on Mac</strong>
-          <p>Use File, then Add to Dock.</p>
-        </li>
-      </ol>
+      <h2 id="app-dialog-title">Install Latchlane.</h2>
+      <p id="app-install-intro"></p>
+      <ol id="app-install-steps" class="setup-steps"></ol>
+      <section class="agent-setup" aria-labelledby="agent-setup-title">
+        <h3 id="agent-setup-title">Using an agent to set it up?</h3>
+        <p>
+          Copy this prompt to an agent on this computer. It contains no key,
+          passphrase, pairing code, or private address.
+        </p>
+        <code id="agent-setup-prompt" class="setup-snippet"></code>
+        <button id="copy-agent-setup" class="text-button" type="button">
+          Copy setup prompt
+        </button>
+      </section>
       <p class="fine">
-        The app works while the host is reachable. If it is offline, it shows a
+        This saves a browser app shortcut. It does not install a vault host,
+        copy keys, or move pairings. The host must stay online; offline opens a
         recovery screen instead of a cached vault page.
       </p>
       <button class="primary wide" data-close="app-dialog">Got it</button>

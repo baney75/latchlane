@@ -5,13 +5,20 @@
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'
+uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'
 latchlane install-app
 ```
 
-This installs and opens a dedicated Latchlane app window using a separate Chromium profile. It does not use your signed-in Vivaldi session. Later, open Latchlane from your Applications or Start Menu. Create a passphrase, then add your first key. The passphrase is not stored by default. Keep it in your password manager; there is no reset backdoor.
+`latchlane install-app` creates a per-user launcher and opens Latchlane in the normal
+supported Chromium browser profile, including its existing cookies and extensions. It
+does not copy or migrate a vault, API key, pairing code, or pairing credential. Later,
+open Latchlane from your Applications or Start Menu. Create a passphrase, then add your
+first key. The passphrase is not stored by default. Keep it in your password manager;
+there is no reset backdoor.
 
-For a technical host-only process, use `latchlane start`; use `latchlane app` to open its dedicated window. `latchlane install-app --no-open` installs the launcher without opening it.
+For a technical host-only process, use `latchlane start`; use `latchlane app` to open
+Latchlane in the selected default browser. `latchlane install-app --no-open` installs
+the launcher without opening it.
 
 To install the agent skill:
 
@@ -117,9 +124,12 @@ Tailscale handles identity-provider sign-in in its own app/browser. Its separate
 | Headless server | Host using `latchlane init`, then `latchlane start --no-open` |
 | Other devices | Browser access if HTTPS and Tailscale are supported; no claim of a native host everywhere |
 
-Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.2.0 is an early public release, not an independently audited secrets manager.
+Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.2.1 is an early public release, not an independently audited secrets manager.
 
-The desktop app flow has live default-browser verification on macOS and Linux. Windows launcher support is provided, but Windows default-browser detection has not been verified for this release.
+The macOS app launch was observed with the default browser. Linux default-browser
+handling has unit and CI coverage, but no live Linux desktop session was observed for
+this release. Windows launcher support is provided, but Windows default-browser
+detection has not been verified for this release.
 
 ## Local options
 
@@ -135,7 +145,9 @@ local port. For a passphrase vault on a custom port, open its console with
 https://api.example.com --header X-API-Key --prefix none` opens a compact named capture form. Header and prefix are optional; omitted values keep the form defaults. `latchlane start --port PORT`
 chooses a different local port.
 
-Latchlane uses the supported default Chromium browser when it can identify one. If your default is Safari or Firefox, it will not substitute another browser. Run `latchlane owner`, then use Safari’s Add to Dock or keep the console open in Firefox.
+Latchlane opens the default browser. Supported Chromium browsers open an app window in
+their normal profile. Safari and Firefox open the owner console normally; Safari users
+can choose **File → Add to Dock**, which creates a web app that may ask them to sign in.
 
 Choose a 24-hour or 30-day remembered owner session at sign-in. Both end when the vault locks or the host restarts. **Sign out** ends that browser session. Editing key metadata with an empty secret field keeps the current secret value.
 

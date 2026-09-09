@@ -54,6 +54,12 @@ def main():
 
                 # A normal URL and an invalid setup fragment cannot initialize a vault.
                 page.goto(ORIGIN);page.locator('#enter').wait_for(state='visible');assert page.locator('#enter').is_disabled()
+                # Install help stays usable before unlocking. A native install event takes
+                # priority; otherwise it shows browser-specific, non-secret guidance.
+                page.evaluate('''() => { const event = new Event('beforeinstallprompt'); Object.defineProperty(event, 'prompt', {value: () => { window.__fixtureInstallPrompted = true; }}); Object.defineProperty(event, 'userChoice', {value: Promise.resolve({outcome: 'accepted'})}); window.dispatchEvent(event); }''')
+                page.locator('#welcome-install-help').click();assert page.evaluate('window.__fixtureInstallPrompted === true')
+                page.locator('#install-help').click();page.locator('#app-dialog').wait_for(state='visible');assert 'Install Latchlane in your browser.' in page.locator('#app-dialog').inner_text();assert 'latchlane install-app' in page.locator('#agent-setup-prompt').inner_text();assert 'pairing code' in page.locator('#app-dialog').inner_text();assert page.evaluate('document.documentElement.scrollWidth <= innerWidth');page.screenshot(path=str(ROOT/'docs/install-help-desktop.png'),full_page=False,animations='disabled');page.locator('#app-dialog [data-close]').first.click()
+                page.set_viewport_size({'width':390,'height':844});page.locator('#install-help').click();page.locator('#app-dialog').wait_for(state='visible');assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'install guide overflow at 390';page.screenshot(path=str(ROOT/'docs/install-help-mobile.png'),full_page=False,animations='disabled');page.locator('#app-dialog [data-close]').first.click();page.set_viewport_size({'width':1440,'height':1050})
                 page.goto(ticket.replace('/#','/?fixture-setup=1#'));page.locator('#password').fill(PASSPHRASE);page.locator('#confirm').fill('different-fixture-passphrase');page.locator('#enter').click()
                 page.locator('#notice.error').wait_for(state='visible')
                 # The valid one-use setup window recovers from a mismatched passphrase without a new ticket.
@@ -124,7 +130,7 @@ def main():
                 page.locator('#mcp-guide').click();assert page.locator('#mcp-dialog').is_visible();assert '"args": ["mcp"]' in page.locator('#mcp-dialog').inner_text();page.locator('#mcp-dialog [data-close]').first.click()
                 page.locator('#sync-guide').click();assert page.locator('#sync-dialog').is_visible();page.locator('#sync-dialog [data-close]').first.click()
                 for width in (320,390,768,1280):
-                    page.set_viewport_size({'width':width,'height':1000});page.wait_for_timeout(100);assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),f'overflow at {width}'
+                    page.set_viewport_size({'width':width,'height':1000});page.wait_for_timeout(100);assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),f'overflow at {width}';page.evaluate('window.scrollTo(0,0)') if width==320 else None;page.screenshot(path=str(ROOT/'docs/console-320.png'),full_page=False,animations='disabled') if width==320 else None
                 page.set_viewport_size({'width':320,'height':1000});page.locator('#mcp-guide').click();assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'modal overflow at 320';page.locator('#mcp-dialog [data-close]').first.click()
                 page.locator('#lock').click();page.locator('#welcome').wait_for(state='visible');assert page.locator('#key-dialog').is_hidden()
                 page.locator('#password').fill(PASSPHRASE);page.locator('#enter').click();page.locator('#dashboard').wait_for(state='visible')

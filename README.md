@@ -33,22 +33,27 @@ Give your agent this prompt:
 
 ```text
 Set up Latchlane using https://github.com/baney75/latchlane
-and its skills/latchlane/SKILL.md. Install the CLI and skill, run
-latchlane install-app, then open it with latchlane app if needed.
-Guide me through creating a vault and pairing my agent.
-Keep Always ask on unless I choose otherwise. I will enter
-passphrases and keys locally, never in chat. Ask whether I
-want to connect my other devices through Tailscale.
+and its skills/latchlane/SKILL.md. Install the current release and the skill, run
+latchlane install-app, then open the owner console. Keep Always ask unless I explicitly choose another
+mode. I will enter passphrases, API keys, and pairing codes locally, never in
+chat. Do not copy, migrate, print, or ask me to share any secret.
 ```
 
 Or start it yourself with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+:
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'
+uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'
 latchlane install-app
 ```
 
-Latchlane installs and opens a dedicated app window with its own browser profile. Create a passphrase, choose **Add a key**, name it, and choose **Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when the form is complete. Browsers that block clipboard watching offer a masked paste field. Later, open the Latchlane launcher from your Applications or Start Menu. If the default browser is Safari or Firefox, use `latchlane owner`, then add the console to Safari’s Dock or use it in Firefox. Latchlane will not substitute another browser. [Technical host setup →](docs/getting-started.md#start-here)
+This opens Latchlane in your normal supported browser profile, including its existing
+cookies and extensions. Create a passphrase, choose **Add a key**, name it, and choose
+**Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when
+the form is complete. Browsers that block clipboard watching offer a masked paste field.
+Later, open the Latchlane launcher from your Applications or Start Menu. If you use
+Safari, **File → Add to Dock** saves the console as a web app and may ask you to sign
+in again. Latchlane never copies vault data, keys, or pairing credentials between
+browser profiles. [Technical host setup →](docs/getting-started.md#start-here)
 
 Choose a 24-hour or 30-day remembered owner session at sign-in; both end on lock or host restart. An agent can open a compact owner-visible capture window with `latchlane capture NAME --origin HTTPS_ORIGIN`, optionally prefilling the authentication header and prefix. The agent never receives the secret value.
 

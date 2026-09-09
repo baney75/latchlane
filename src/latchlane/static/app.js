@@ -568,6 +568,65 @@ function registerPwa() {
   if ("serviceWorker" in navigator && window.isSecureContext)
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
 }
+const agentSetupPrompt = `Set up Latchlane from https://github.com/baney75/latchlane and read its skills/latchlane/SKILL.md. Install the current release and the skill, run latchlane install-app, then open the owner console. Keep Always ask unless I explicitly choose another mode. I will enter passphrases, API keys, and pairing codes locally, never in chat. Do not copy, migrate, print, or ask me to share any secret.`;
+function installContext() {
+  const ua = navigator.userAgent;
+  const mobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const ios = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const mac = /Macintosh|Mac OS X/.test(ua) && !ios;
+  const vivaldi = /Vivaldi/i.test(ua);
+  const firefox = /Firefox/i.test(ua);
+  const safari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Vivaldi/i.test(ua);
+  const linux = /Linux/.test(ua) && !/Android/.test(ua);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if (standalone)
+    return { title: "You’re using the app window.", intro: "This console is already open in an app window. Sign in if this browser asks you to.", steps: [["Open it when you need it", "Use your browser’s apps list, Dock, Start Menu, or launcher. The console still needs its vault host online."]] };
+  if (ios)
+    return { title: "Add Latchlane to your Home Screen.", intro: "Safari can save this private console as a web app on this device.", steps: [["Open in Safari", "Use Safari for this private address."], ["Share", "Tap Share, then choose Add to Home Screen."], ["Open the saved app", "Sign in if prompted. It still needs the vault host online."]] };
+  if (safari && mac)
+    return { title: "Add Latchlane to your Dock.", intro: "Safari can save this console as a web app on your Mac.", steps: [["Use Safari’s menu", "Choose File, then Add to Dock."], ["Open it from the Dock", "Sign in if prompted. It keeps using this vault host while the host is online."]] };
+  if (firefox)
+    return { title: "Keep Latchlane handy in Firefox.", intro: "Firefox does not offer the same install flow here. Save or pin this private address in your normal Firefox profile.", steps: mac ? [["Save this address", "Bookmark or pin this tab, then open it whenever you need the owner console."], ["Optional macOS app", "Open the same address in Safari and choose File, then Add to Dock."]] : [["Save this address", "Bookmark or pin this tab, then open it whenever you need the owner console."]] };
+  if (vivaldi)
+    return { title: "Install Latchlane in Vivaldi.", intro: "Vivaldi can save this console as an app while keeping your normal Vivaldi profile.", steps: [["Use Vivaldi’s install control", "Choose the install icon in the address bar, or right-click the tab and choose Install Latchlane. If that option is unavailable, choose Create shortcut and open it as a window."], ["Open the app", "It uses this Vivaldi profile and still connects only to the current vault host."]] };
+  if (mobile)
+    return { title: "Add Latchlane to this device.", intro: "Your browser can usually save this private console to the Home Screen.", steps: [["Use the browser menu", "Choose Install app or Add to Home screen."], ["Open the saved app", "It keeps using this browser’s profile and needs the vault host online."]] };
+  if (linux)
+    return { title: "Install Latchlane in your browser.", intro: "Chromium browsers on Linux can save this console as an app in the browser profile you already use.", steps: [["Use the address bar or menu", "Choose Install Latchlane or Create shortcut."], ["Open it from your launcher", "The saved app still uses the same browser profile and vault host."]] };
+  return { title: "Install Latchlane in your browser.", intro: "Save this console as an app in the browser profile you already use.", steps: [["Use the install control", "Choose the install icon in the address bar, or open the browser menu and choose Install app."], ["Open the saved app", "It keeps using this browser profile and needs the vault host online."]] };
+}
+function renderInstallGuide() {
+  const guide = installContext();
+  $("app-dialog-title").textContent = guide.title;
+  $("app-install-intro").textContent = guide.intro;
+  $("app-install-steps").replaceChildren(
+    ...guide.steps.map(([title, detail]) => {
+      const item = document.createElement("li");
+      item.append(node("strong", title), node("p", detail));
+      return item;
+    }),
+  );
+  $("agent-setup-prompt").textContent = agentSetupPrompt;
+}
+function openInstallGuide() {
+  clearDialogNotices();
+  renderInstallGuide();
+  $("app-dialog").showModal();
+}
+async function installOrGuide() {
+  if (!deferredInstallPrompt) {
+    openInstallGuide();
+    return;
+  }
+  const event = deferredInstallPrompt;
+  deferredInstallPrompt = null;
+  try {
+    await event.prompt();
+    await event.userChoice;
+  } catch (error) {
+    openInstallGuide();
+  }
+}
 
 $("login-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -615,20 +674,10 @@ $("logout").onclick = async () => {
   }
 };
 $("retry").onclick = () => boot();
-$("install-app").onclick = async () => {
-  if (!deferredInstallPrompt) {
-    clearDialogNotices();
-    $("app-dialog").showModal();
-    return;
-  }
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice;
-  deferredInstallPrompt = null;
-};
-$("app-help").onclick = () => {
-  clearDialogNotices();
-  $("app-dialog").showModal();
-};
+$("install-app").onclick = installOrGuide;
+$("install-help").onclick = openInstallGuide;
+$("welcome-install-help").onclick = installOrGuide;
+$("app-help").onclick = openInstallGuide;
 $("notifications").onclick = async () => {
   if (!("Notification" in window) || Notification.permission === "denied")
     return;
@@ -849,6 +898,8 @@ $("copy-pair").onclick = () =>
   copyText($("pair-code").textContent, "Pairing code");
 $("copy-pair-command").onclick = () =>
   copyText($("pair-command").textContent, "Pairing command");
+$("copy-agent-setup").onclick = () =>
+  copyText(agentSetupPrompt, "Setup prompt");
 $("sync-guide").onclick = () => {
   clearDialogNotices();
   $("sync-dialog").showModal();

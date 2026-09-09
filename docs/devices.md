@@ -29,16 +29,18 @@ Latchlane does not provide that feature.
 ## Install the owner app
 
 On a Mac vault host, `latchlane install-app` creates a searchable
-`~/Applications/Latchlane.app` launcher and opens it. Later launches use the same
-dedicated app window and browser profile. It starts a local host in the background
-when one is not running; it does not install an OS autostart service.
+`~/Applications/Latchlane.app` launcher and opens Latchlane with the normal supported
+Chromium profile. Existing cookies and extensions remain in that browser profile; no
+vault, key, pairing code, or agent credential is copied or migrated. It starts a local
+host in the background when one is not running; it does not install an OS autostart
+service.
 
 On Linux, the same command creates a per-user `.desktop` launcher under the XDG data
 directory. It uses the default browser only when that browser is a supported Chromium
 browser. Custom `XDG_DATA_HOME` and `XDG_DATA_DIRS` locations are respected when
-looking up the default browser. If the default is unsupported, such as Firefox,
-Latchlane does not substitute another browser; run `latchlane owner` and keep the
-console open in that browser. On macOS, Safari users can choose Add to Dock.
+looking up the default browser. Unsupported defaults, such as Firefox, open the owner
+console in that browser. On macOS, Safari users can choose **File → Add to Dock**;
+that web app may ask them to sign in.
 
 On iPhone, iPad, and Android, open the console in the device browser and use its
 install or Add to Home Screen control when available. The installed web app still

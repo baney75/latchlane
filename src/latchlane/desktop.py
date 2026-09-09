@@ -18,14 +18,6 @@ from .cli import PORT, broker_url, data_dir, private_read
 from .vault import VaultError, private_directory
 
 
-MAC_BROWSERS = (
-    "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
-    str(Path.home() / "Applications/Vivaldi.app/Contents/MacOS/Vivaldi"),
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-)
-
-
 def default_browser_path(system=None):
     system = system or platform.system()
     try:
@@ -59,19 +51,11 @@ def default_browser_path(system=None):
 def browser_path(system=None):
     system = system or platform.system()
     default = default_browser_path(system)
-    if default:
-        if Path(default).is_file() and any(name in Path(default).name.lower() for name in ("vivaldi", "chrome", "chromium", "edge")):
-            return default
-        raise ValueError("Your default browser is not a supported Chromium browser. Use latchlane owner in Safari and Add to Dock, or use the browser console in Firefox; Latchlane will not substitute another browser.")
-    if system == "Darwin":
-        candidates = MAC_BROWSERS
-    elif system == "Windows":
-        roots = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("PROGRAMFILES", ""), os.environ.get("PROGRAMFILES(X86)", "")]
-        candidates = tuple(str(Path(root) / suffix) for root in roots if root for suffix in (
-            "Vivaldi/Application/vivaldi.exe", "Google/Chrome/Application/chrome.exe", "Microsoft/Edge/Application/msedge.exe"))
-    else:
-        candidates = tuple(filter(None, (shutil.which(name) for name in ("vivaldi-stable", "vivaldi", "google-chrome", "chromium", "chromium-browser", "microsoft-edge"))))
-    return next((path for path in candidates if Path(path).is_file()), None)
+    if default and Path(default).is_file() and any(name in Path(default).name.lower() for name in ("vivaldi", "chrome", "chromium", "edge")):
+        return default
+    # Do not replace the user's selected browser with a discovered installation.
+    # When its executable cannot make an app window, open through the OS instead.
+    return None
 
 
 def local_dialog(message, system=None):
@@ -130,16 +114,31 @@ def startup_url(url):
     return url + "/"
 
 
+def open_default_browser(url, system=None):
+    """Open a URL through the OS-selected default browser."""
+    system = system or platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        elif system == "Windows":
+            getattr(os, "startfile")(url)
+        else:
+            subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except (AttributeError, OSError):
+        raise ValueError("Latchlane could not open your default browser. Check its installation, then run latchlane app again.") from None
+
+
 def open_app(url, profile=None, capture=False, system=None):
     browser = browser_path(system)
     if not browser:
-        raise ValueError("No supported Chromium browser was found. Install Vivaldi, Chrome, Edge, or Chromium, then run latchlane app again.")
-    profile = profile or data_dir() / "app-browser-profile"
-    try:
-        private_directory(profile)
-    except VaultError as error:
-        raise ValueError("Latchlane app profile is unsafe: " + str(error)) from None
-    command = [browser, "--app=" + url, "--user-data-dir=" + str(profile), "--no-first-run", "--no-default-browser-check"]
+        return open_default_browser(url, system)
+    command = [browser, "--app=" + url, "--no-first-run", "--no-default-browser-check"]
+    if profile is not None:
+        try:
+            private_directory(profile)
+        except VaultError as error:
+            raise ValueError("Latchlane app profile is unsafe: " + str(error)) from None
+        command.append("--user-data-dir=" + str(profile))
     if capture:
         command.append("--window-size=520,760")
     try:
@@ -220,7 +219,16 @@ def mac_icon(resources):
         return None
 
 
-def mac_launcher(cli):
+def launcher_url(url):
+    """Validate a broker origin before embedding it in a platform launcher."""
+    value = broker_url(url)
+    if any(char.isspace() or char in "'\"`$;&|<>\\\r\n" for char in value):
+        raise ValueError("Cannot safely create a launcher for this broker address.")
+    return value
+
+
+def mac_launcher(cli, url):
+    url = launcher_url(url)
     app_dir = Path.home() / "Applications/Latchlane.app"
     info = app_dir / "Contents/Info.plist"
     if app_dir.exists():
@@ -238,38 +246,53 @@ def mac_launcher(cli):
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\"><dict><key>CFBundleExecutable</key><string>Latchlane</string><key>CFBundleIdentifier</key><string>dev.latchlane.app</string><key>CFBundleName</key><string>Latchlane</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>Latchlane</string></dict></plist>""")
     launcher = macos / "Latchlane"
-    launcher.write_text("#!/bin/sh\nexec " + shlex.quote(cli) + " app \"$@\"\n")
+    launcher.write_text("#!/bin/sh\nexec " + shlex.quote(cli) + " app --url " + shlex.quote(url) + " \"$@\"\n")
     launcher.chmod(0o755)
     mac_icon(resources)
     return app_dir
 
 
-def linux_launcher(cli):
-    desktop = Path.home() / ".local/share/applications/latchlane.desktop"
+def desktop_entry_argument(value):
+    if any(char in "\r\n" for char in value):
+        raise ValueError("Cannot safely create a Linux launcher for this value.")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`").replace("%", "%%") + '"'
+
+
+def linux_launcher(cli, url):
+    url = launcher_url(url)
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    desktop = data_home / "applications/latchlane.desktop"
     desktop.parent.mkdir(parents=True, exist_ok=True)
     if desktop.exists(): refuse_unrelated(desktop, "Name=Latchlane")
-    quoted = '"' + cli.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`").replace("%", "%%") + '"'
-    desktop.write_text("[Desktop Entry]\nType=Application\nName=Latchlane\nExec=" + quoted + " app\nTerminal=false\nCategories=Utility;Security;\n")
+    icon = Path(__file__).with_name("static") / "icons/mark-512.png"
+    contents = "[Desktop Entry]\nType=Application\nName=Latchlane\nExec=" + desktop_entry_argument(cli) + " app --url " + desktop_entry_argument(url) + "\nTerminal=false\nCategories=Utility;Security;\n"
+    if icon.is_file() and not any(char in "\r\n" for char in str(icon)):
+        contents += "Icon=" + str(icon) + "\n"
+    desktop.write_text(contents)
     desktop.chmod(0o755)
     return desktop
 
 
-def windows_launcher(cli):
+def windows_launcher(cli, url):
+    url = launcher_url(url)
     programs = Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming"))) / "Microsoft/Windows/Start Menu/Programs"
     programs.mkdir(parents=True, exist_ok=True)
     launcher = programs / "Latchlane.cmd"
-    if launcher.exists(): refuse_unrelated(launcher, " app %*")
+    if launcher.exists():
+        existing = launcher.read_text(errors="ignore")
+        if " app %*" not in existing and " app --url " not in existing:
+            raise ValueError("Refusing to replace an unrelated launcher at " + str(launcher))
     if any(char in cli for char in "&|<>^%\r\n"):
         raise ValueError("Cannot safely create a Windows launcher for this command path.")
-    launcher.write_text("@echo off\r\n" + subprocess.list2cmdline([cli, "app"]) + " %*\r\n")
+    launcher.write_text("@echo off\r\n" + subprocess.list2cmdline([cli, "app", "--url", url]) + " %*\r\n")
     return launcher
 
 
 def install_app(args):
-    cli = installed_cli(); system = platform.system()
-    if system == "Darwin": launcher = mac_launcher(cli)
-    elif system == "Windows": launcher = windows_launcher(cli)
-    else: launcher = linux_launcher(cli)
+    cli = installed_cli(); system = platform.system(); url = launcher_url(args.url)
+    if system == "Darwin": launcher = mac_launcher(cli, url)
+    elif system == "Windows": launcher = windows_launcher(cli, url)
+    else: launcher = linux_launcher(cli, url)
     print("Latchlane launcher installed at " + str(launcher))
     if not args.no_open:
         app(args)

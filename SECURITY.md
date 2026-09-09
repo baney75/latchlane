@@ -49,9 +49,10 @@ interface, encryption algorithm, or the presence of tests.
 - Memory zeroization is not guaranteed in Python or browsers. Swap, crash dumps,
   browser extensions, clipboard managers and clipboard sync are outside the vault's
   control. Clipboard compare-and-clear is best effort in browsers, not atomic.
-- The PWA cache and the desktop app's separate browser profile can retain static
-  interface files and owner-session cookies on that device. They do not contain
-  vault ciphertext or agent credentials, but are part of the local device boundary.
+- The PWA cache and the normal browser profile used by the desktop launcher can retain
+  static interface files and owner-session cookies on that device. They do not contain
+  vault ciphertext or agent credentials, but browser extensions and session cookies are
+  part of the local device boundary.
 - A provider is trusted to receive its key. Literal/common-format echo redaction
   helps with accidental disclosure; a malicious provider can encode a key in ways
   that evade it. Auto approve GET routes can still have side effects if the provider
