@@ -27,6 +27,7 @@ jobs:
       - run: uv sync --extra test
       - run: uv run --with playwright playwright install --with-deps chromium
       - run: uv run --with playwright python tests/browser_check.py
+      - run: uv run --with playwright python tests/browser_credentials.py
   dependency-audit:
     runs-on: ubuntu-latest
     steps:

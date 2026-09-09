@@ -8,6 +8,7 @@ let initialized = false,
   watching = null,
   copiedValue = null,
   editingKey = null,
+  keyFormGeneration = 0,
   state = null,
   renderedSignature = null,
   pairTimer = null,
@@ -205,7 +206,7 @@ function renderDashboard(next) {
     const row = node("div", undefined, "key-row"),
       meta = node("div", undefined, "key-meta"),
       text = node("div");
-    text.append(node("strong", key.name), node("p", key.origin));
+    text.append(node("strong", key.name), node("p", key.origin + (key.kind === "password" ? " · Login" : "")));
     meta.append(node("span", "↗", "key-symbol"), text);
     const actions = node("div", undefined, "key-actions");
     const details = document.createElement("details");
@@ -214,7 +215,7 @@ function renderDashboard(next) {
     details.append(
       node(
         "p",
-        `Authentication: ${key.header}${key.prefix ? ` (${key.prefix.trim()})` : " (no prefix)"}`,
+        key.kind === "password" ? `Login: ${key.username || "No username saved"}. Password use requires a child-process lease.` : `Authentication: ${key.header}${key.prefix ? ` (${key.prefix.trim()})` : " (no prefix)"}`,
       ),
       node(
         "p",
@@ -350,6 +351,7 @@ async function refresh() {
     updatePendingExpiry();
     updatePendingNotifications(next);
   }
+  credentialsUI.update(next);
   return next;
 }
 function presentWelcome(status) {
@@ -419,6 +421,8 @@ function setPairResult(data, origin) {
   pairTimer = setInterval(tick, 1000);
 }
 function clearSensitiveUI() {
+  keyFormGeneration++;
+  credentialsUI.reset();
   stopWatch();
   clearPairResult();
   copiedValue = null;
@@ -479,6 +483,7 @@ async function boot() {
     initialized = status.initialized;
     try {
       await refresh();
+      await credentialsUI.openDeepLink();
       if (captureParams.has("capture")) {
         openKey();
         $("key-name").value = captureParams.get("capture");
@@ -502,12 +507,14 @@ async function boot() {
   }
 }
 function openKey() {
+  keyFormGeneration++;
   clearDialogNotices();
   $("key-form").reset();
   editingKey = null;
   copiedValue = null;
   stopWatch();
   $("key-name").disabled = false;
+  $("key-kind").disabled = false;
   $("key-value").required = true;
   $("key-value").placeholder = "Paste directly here";
   $("key-dialog-title").textContent = captureMode
@@ -525,6 +532,7 @@ function openKey() {
     .querySelectorAll("#key-fields details")
     .forEach((details) => (details.open = false));
   if (captureMode) compactCaptureFields();
+  syncKeyKind();
   $("capture-state").textContent =
     "Clipboard access stays on this device. Paste manually if your browser blocks access.";
   $("key-dialog").showModal();
@@ -546,6 +554,10 @@ function compactCaptureFields() {
 function openEdit(key) {
   openKey();
   editingKey = key;
+  $("key-kind").value = key.kind || "api_key";
+  $("key-kind").disabled = true;
+  $("key-username").value = key.username || "";
+  syncKeyKind();
   $("key-name").value = key.name;
   $("key-name").disabled = true;
   $("key-origin").value = key.origin;
@@ -559,6 +571,18 @@ function openEdit(key) {
     "Update routing details. Leave the secret blank to keep it unchanged.";
   $("save-key").innerHTML = "Save changes";
 }
+function syncKeyKind() {
+  const password = $("key-kind").value === "password";
+  show("key-login-fields", password);
+  show("key-auth-options", !password);
+  show("key-trusted-options", !password);
+  if ($("capture-advanced")) show("capture-advanced", !password);
+  $("key-origin-label").textContent = password ? "Website origin" : "API origin";
+  $("key-origin").placeholder = password ? "https://example.com" : "https://api.example.com";
+  $("key-value").autocomplete = password ? "section-single current-password" : "off";
+  document.querySelector('[for="key-value"]').textContent = password ? "Password" : "Secret value";
+}
+$("key-kind").onchange = syncKeyKind;
 function registerPwa() {
   const standalone =
     matchMedia("(display-mode: standalone)").matches || navigator.standalone;
@@ -706,6 +730,8 @@ document
     (button) => (button.onclick = () => $(button.dataset.close).close()),
   );
 $("key-dialog").addEventListener("close", () => {
+  keyFormGeneration++;
+  $("key-username").value = "";
   stopWatch();
   $("key-value").value = "";
   copiedValue = null;
@@ -718,8 +744,11 @@ $("key-header").onchange = () => {
     $("key-header").value === "Authorization" ? "Bearer " : "";
 };
 $("clipboard").onclick = async () => {
+  const current = keyFormGeneration;
   try {
-    copiedValue = await navigator.clipboard.readText();
+    const captured = await navigator.clipboard.readText();
+    if (current !== keyFormGeneration || !$("key-dialog").open) return;
+    copiedValue = captured;
     $("key-value").value = copiedValue;
     notice("Captured locally. Choose Encrypt & save.");
   } catch (error) {
@@ -734,8 +763,10 @@ $("watch-copy").onclick = async () => {
     stopWatch();
     return;
   }
+  const current = keyFormGeneration;
   try {
     const initial = await navigator.clipboard.readText();
+    if (current !== keyFormGeneration || !$("key-dialog").open) return;
     $("watch-copy").textContent = "Cancel watching";
     $("capture-state").textContent =
       "Copy your key, then return to this window. Waiting for a new value for 2 minutes.";
@@ -752,6 +783,7 @@ $("watch-copy").onclick = async () => {
       busy = true;
       try {
         const value = await navigator.clipboard.readText();
+        if (current !== keyFormGeneration || !$("key-dialog").open) return;
         if (value && value !== initial) {
           copiedValue = value;
           $("key-value").value = value;
@@ -802,6 +834,8 @@ $("key-form").onsubmit = async (event) => {
   const value = $("key-value").value,
     body = {
       name: $("key-name").value,
+      kind: $("key-kind").value,
+      username: $("key-kind").value === "password" ? $("key-username").value : "",
       origin: $("key-origin").value,
       header: $("key-header").value,
       prefix: $("key-prefix").value,
@@ -811,6 +845,8 @@ $("key-form").onsubmit = async (event) => {
         .filter(Boolean),
     },
     submit = $("save-key");
+  if (body.kind === "password") { body.header = "Authorization"; body.prefix = ""; body.safe_paths = []; }
+  if (editingKey) delete body.name;
   if (!editingKey || value) body.value = value;
   if (submit.disabled) return;
   submit.disabled = true;
@@ -843,7 +879,7 @@ $("key-form").onsubmit = async (event) => {
 const descriptions = {
   ask: "Every key use waits for your approval. Approved requests can be used once and expire after five minutes.",
   auto: "Only exact GET routes you mark as trusted are approved automatically. Everything else, including raw-key access, asks you first. GET alone is not a safety guarantee.",
-  yolo: "Every paired agent can use every stored key without asking, including raw-key access. A paired agent may retain or share released keys. Only enable this for agents and devices you trust.",
+  yolo: "Every paired agent can use every stored credential without asking, including password and raw-key access through a child process. A paired agent may retain or share released credentials. Only enable this for agents and devices you trust.",
 };
 document.querySelectorAll("[data-mode]").forEach(
   (mode) =>
@@ -918,12 +954,15 @@ window.addEventListener("appinstalled", () => {
   $("install-app").disabled = true;
 });
 window.addEventListener("pagehide", () => {
+  keyFormGeneration++;
+  $("key-username").value = "";
   stopWatch();
   copiedValue = null;
   $("key-value").value = "";
   $("password").value = "";
   $("confirm").value = "";
 });
+const credentialsUI = window.LatchlaneCredentials.mount({ api, refresh, onError: handleActionError, notice });
 updateNotificationStatus();
 registerPwa();
 boot();

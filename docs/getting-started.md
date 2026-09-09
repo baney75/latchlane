@@ -5,7 +5,7 @@
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'
+uv tool install 'git+https://github.com/baney75/latchlane@v0.3.0'
 latchlane install-app
 ```
 
@@ -40,9 +40,9 @@ The broker enforces these modes. Agent credentials cannot change modes, approve 
 
 **The trust boundary matters:** a process that can read the vault host’s memory, owner browser session, or unattended unlock file can bypass this boundary. For untrusted agents, run the vault on a separate host or OS account. A raw key already released to a client cannot be recalled; rotate it at the provider when necessary.
 
-### Add a key without putting it in chat
+### Add a credential without putting it in chat
 
-1. Choose **Add a key**. Enter a name, the provider’s exact API origin, and its
+1. Choose **+ Add credential**. Enter a name, the provider’s exact API origin, and its
    required header and prefix. Latchlane can attach the value as a supported API-key
    header, or as `Bearer ` or `Basic ` authentication. It never guesses a provider’s
    header format.
@@ -76,6 +76,48 @@ latchlane run --purpose 'Run my trusted local client' my-service SERVICE_API_KEY
 
 This requests raw-key access and passes the value directly to the child process. The CLI does not print it, but **the child can read, retain, or log it**. Prefer the API broker when possible.
 
+## Request and add credentials in a reviewed batch
+
+An agent can ask the owner for one or several named credentials without sending a
+secret. Put only metadata in a JSON file:
+
+```json
+{
+  "purpose": "Use the project’s approved services",
+  "items": [
+    {"name": "project-api", "origin": "https://api.example.com"},
+    {"name": "project-login", "kind": "password", "origin": "https://accounts.example.com"}
+  ]
+}
+```
+
+Then run:
+
+```sh
+latchlane collect --spec-file REQUEST.json --wait
+```
+
+The file must not contain values, passwords, usernames, tokens, routes, or other
+fields. Latchlane opens the paired owner console at its trusted broker origin. The owner reviews the
+requesting agent, purpose, types, and destinations, then explicitly saves the
+batch. `--wait` polls no faster than every two seconds for up to 15 minutes; it
+opens the local unlock screen if needed and retries only after the host reports an
+unlocked vault. `--no-open` is for an already-open owner console.
+
+The agent sees only the collection ID, status, and names. A completed collection
+does not grant access beyond the currently selected Always ask, Auto approve, or
+YOLO policy. Password entries have an optional username and accept Unicode, but
+they are lease-only: Latchlane rejects password use through its HTTP broker in all
+modes. Use a raw lease only with a child process you trust.
+
+### Password-manager CSV import
+
+The owner console can import an owner-selected CSV for a reviewed batch. It masks
+secret values, never uploads the file to a third-party service, never auto-selects
+every row, and saves only the explicitly selected rows. The source export is
+plaintext and remains yours; Latchlane does not delete it. See
+[password-manager imports](password-managers.md) for supported mappings and limits.
+
 ### MCP
 
 After pairing, add this stdio server to an MCP-capable agent:
@@ -94,6 +136,17 @@ After pairing, add this stdio server to an MCP-capable agent:
 The tools list key names, request a brokered API operation, and consume an approved
 request. The MCP surface never provides a raw-key retrieval tool. Run `latchlane mcp`
 locally for the same stdio server and `latchlane mcp --help` for its CLI help.
+
+For an integration that may ask the owner to collect credentials but must not use
+the normal broker tools, run `latchlane mcp --collections-only`. It exposes only
+`latchlane_collect` and `latchlane_collection_status`. The [agent integration
+guide](agents.md) documents Hermes commands and the private ChatGPT tunnel command;
+neither is connected automatically.
+
+If `latchlane_collect` reports `unlock_required`, the owner must unlock the local
+Latchlane console and the agent must retry the same metadata-only request. That
+response has no collection ID because no collection was created while the vault was
+locked.
 
 ## Your devices, connected
 
@@ -124,7 +177,7 @@ Tailscale handles identity-provider sign-in in its own app/browser. Its separate
 | Headless server | Host using `latchlane init`, then `latchlane start --no-open` |
 | Other devices | Browser access if HTTPS and Tailscale are supported; no claim of a native host everywhere |
 
-Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.2.1 is an early public release, not an independently audited secrets manager.
+Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.3.0 is an early public release, not an independently audited secrets manager.
 
 The macOS app launch was observed with the default browser. Linux default-browser
 handling has unit and CI coverage, but no live Linux desktop session was observed for

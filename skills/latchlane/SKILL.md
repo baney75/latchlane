@@ -7,7 +7,7 @@ description: Set up and use Latchlane to store API keys through local clipboard 
 
 Use the installed `latchlane` CLI. If missing, read the project's README and
 SECURITY.md at https://github.com/baney75/latchlane before installation. Install
-with `uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'` after reviewing
+with `uv tool install 'git+https://github.com/baney75/latchlane@v0.3.0'` after reviewing
 the source and environment. Use supported Python 3.11+ on macOS, Windows or Linux.
 Phones/tablets use the browser console through a Tailscale-connected host.
 
@@ -84,6 +84,45 @@ For MCP use `latchlane mcp` as a stdio server: list keys, request an operation,
 then consume its ID. `latchlane mcp --help` describes the command. Do not poll
 faster than every two seconds. MCP provides brokered HTTP only, no raw key tool.
 Stored access never authorizes unrelated destinations or actions.
+
+## Request credentials from the owner
+
+Use `latchlane collect --spec-file REQUEST.json` when an agent needs one or more
+new named credentials. The JSON file accepts only a purpose and metadata-only
+items (`name`, `kind`, HTTPS `origin`, optional `header` and `prefix`); it never
+contains a value, password, username, token, route, or secret. Latchlane opens
+the paired owner console at its own broker origin. `--wait` polls no faster than
+every two seconds for up to 15 minutes and, if the vault is locked, opens the
+local owner unlock screen before one validated retry. Use `--no-open` only where
+the owner has already opened that console.
+
+An owner may add `api_key` or `password` entries. Passwords are Unicode-capable
+and lease-only: they cannot be sent through Latchlane's HTTP broker, including in
+YOLO mode. A trusted child process may receive a raw lease only through the
+existing owner-controlled `latchlane run` flow; never ask for a password in chat.
+
+MCP clients can call `latchlane_collect` and `latchlane_collection_status`; both
+return only IDs, statuses, and requested names. Use `latchlane mcp
+--collections-only` for a metadata-only integration that must not expose the
+normal broker tools. This does not add approval, change the selected mode, or
+release a credential.
+
+### Hermes
+
+Do not change Hermes configuration automatically. For an owner-installed local
+Latchlane command, use `hermes mcp add latchlane --command latchlane --args mcp`,
+then restrict the tool allowlist to `latchlane_keys`, `latchlane_request`,
+`latchlane_consume`, `latchlane_collect`, and `latchlane_collection_status` and
+disable MCP resources and prompts. Run `hermes mcp test latchlane`, then start a
+fresh session or use `/reload-mcp`. Hermes' `trust: full` keeps Latchlane's
+Always ask, Auto approve, and YOLO policies as the enforcement point; choose
+untrusted only when an additional Hermes confirmation is intended. Hermes uses
+`trust: full` by default for an added server; do not change that setting
+automatically.
+
+To install the bundled guidance for Hermes without changing any config, run
+`latchlane install-skill --directory ~/.hermes/skills/latchlane`. It refuses to
+overwrite an existing skill, so review or back up an existing custom file first.
 
 ## Optional Tailscale sync
 

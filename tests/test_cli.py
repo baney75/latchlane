@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -39,10 +40,35 @@ def test_cli_and_mcp(tmp_path):
         assert 'only-a-fixture-value' not in r.stdout and token not in r.stdout
         r=subprocess.run(prefix+['run','--purpose','Verify fixture injection','fixture','TEST_KEY','--',sys.executable,'-c','import os; assert os.environ["TEST_KEY"] == "only-a-fixture-value"; print("child passed")'],env=env,capture_output=True,text=True,timeout=15)
         assert r.returncode==0 and r.stdout.strip()=='child passed',r.stderr
+        spec=tmp_path/'collection.json'
+        spec.write_text(json.dumps({'purpose':'Configure fixture services','items':[{'name':'fixture-new-api','origin':'https://api.example.com'},{'name':'fixture-new-password','kind':'password','origin':'https://accounts.example.com'}]}))
+        r=subprocess.run(prefix+['collect','--spec-file',str(spec),'--no-open'],env=env,capture_output=True,text=True,timeout=15)
+        collection=json.loads(r.stdout)
+        assert r.returncode==0 and collection['status']=='pending' and collection['names']==['fixture-new-api','fixture-new-password']
+        assert 'only-a-fixture-value' not in r.stdout and token not in r.stdout
+        secret_spec=tmp_path/'invalid-collection.json'
+        secret_spec.write_text(json.dumps({'purpose':'Invalid fixture','items':[{'name':'bad-secret','origin':'https://api.example.com','value':'do-not-send'}]}))
+        r=subprocess.run(prefix+['collect','--spec-file',str(secret_spec),'--no-open'],env=env,capture_output=True,text=True,timeout=15)
+        assert r.returncode==1 and 'do-not-send' not in r.stdout+r.stderr
         msgs=[{'jsonrpc':'2.0','id':1,'method':'initialize'},{'jsonrpc':'2.0','id':2,'method':'tools/list'},{'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'latchlane_keys','arguments':{}}}]
         r=subprocess.run(prefix+['mcp'],input=''.join(json.dumps(m)+'\n' for m in msgs),env=env,capture_output=True,text=True,timeout=15)
         replies=[json.loads(s) for s in r.stdout.splitlines()]
-        assert len(replies)==3 and len(replies[1]['result']['tools'])==3
+        assert len(replies)==3 and len(replies[1]['result']['tools'])==5
+        assert 'only-a-fixture-value' not in r.stdout and token not in r.stdout
+        collect_msg={'jsonrpc':'2.0','id':31,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'MCP collection fixture','items':[{'name':'mcp-collection','origin':'https://api.example.com'}],'open_window':False}}}
+        r=subprocess.run(prefix+['mcp'],input=json.dumps(collect_msg)+'\n',env=env,capture_output=True,text=True,timeout=15)
+        reply=json.loads(r.stdout)
+        assert reply['result']['content'][0]['type']=='text' and 'mcp-collection' in reply['result']['content'][0]['text']
+        assert 'only-a-fixture-value' not in r.stdout and token not in r.stdout
+        rejected_msg={'jsonrpc':'2.0','id':32,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Bad MCP collection','items':[{'name':'mcp-bad','origin':'https://api.example.com','value':'do-not-send'}]}}}
+        r=subprocess.run(prefix+['mcp'],input=json.dumps(rejected_msg)+'\n',env=env,capture_output=True,text=True,timeout=15)
+        assert 'error' in json.loads(r.stdout) and 'do-not-send' not in r.stdout
+        restricted=[{'jsonrpc':'2.0','id':41,'method':'initialize'},{'jsonrpc':'2.0','id':42,'method':'tools/list'},{'jsonrpc':'2.0','id':43,'method':'tools/call','params':{'name':'latchlane_request','arguments':{'key':'fixture','path':'/','purpose':'Must be hidden'}}},{'jsonrpc':'2.0','id':44,'method':'tools/call','params':{'name':'latchlane_collection_status','arguments':{'id':collection['id']}}}]
+        r=subprocess.run(prefix+['mcp','--collections-only'],input=''.join(json.dumps(message)+'\n' for message in restricted),env=env,capture_output=True,text=True,timeout=15)
+        replies=[json.loads(line) for line in r.stdout.splitlines()]
+        names=[tool['name'] for tool in replies[1]['result']['tools']]
+        assert names==['latchlane_collect','latchlane_collection_status']
+        assert 'error' in replies[2] and replies[3]['result']['content'][0]['type']=='text'
         assert 'only-a-fixture-value' not in r.stdout and token not in r.stdout
         # Even a lease created outside MCP cannot be printed through its consume tool.
         with httpx.Client(headers={'Authorization':'Bearer '+token,'X-Latchlane':'1'},trust_env=False) as c:
@@ -158,3 +184,50 @@ def test_capture_forwards_optional_auth_metadata_without_secret(monkeypatch, cap
     cli.main()
     assert captured == [('fixture', 'https://api.example.com', 'X-API-Key', '')]
     assert 'fixture' not in capsys.readouterr().out
+
+
+def test_mcp_collection_locked_returns_metadata_state_and_opens_once(monkeypatch, capsys):
+    from latchlane import cli, desktop
+    opened=[]
+    calls=[]
+    class LockedClient:
+        url='http://127.0.0.1:19474'
+        def call(self, method, path, body=None):
+            calls.append((method,path,body))
+            raise cli.BrokerError(423,'Vault locked. Open the owner console to unlock it.')
+    messages=[
+        {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Need a fixture','items':[{'name':'locked-one','origin':'https://api.example.com'}],'open_window':False}}},
+        {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Need a fixture','items':[{'name':'locked-two','origin':'https://api.example.com'}],'open_window':True}}},
+        {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Need a fixture','items':[{'name':'locked-three','origin':'https://api.example.com'}],'open_window':True}}},
+        {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Invalid fixture','items':[{'name':'invalid-locked','origin':'https://api.example.com','value':'never-send'}]}}},
+    ]
+    monkeypatch.setattr(cli,'Client',LockedClient)
+    monkeypatch.setattr(desktop,'open_app',opened.append)
+    monkeypatch.setattr(sys,'stdin',io.StringIO(''.join(json.dumps(message)+'\n' for message in messages)))
+    cli.mcp()
+    replies=[json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    for reply, name in zip(replies[:3],['locked-one','locked-two','locked-three']):
+        data=json.loads(reply['result']['content'][0]['text'])
+        assert data=={'status':'unlock_required','names':[name],'message':'The owner must unlock Latchlane, then retry this collection request.'}
+        assert 'id' not in data and 'url' not in data
+    assert 'error' in replies[3]
+    assert len(calls)==3 and all(call[1]=='/api/collections' for call in calls)
+    assert opened==['http://127.0.0.1:19474/']
+
+
+def test_mcp_collection_locked_survives_owner_window_launch_failure(monkeypatch, capsys):
+    from latchlane import cli, desktop
+    class LockedClient:
+        url='http://127.0.0.1:19474'
+        def call(self, method, path, body=None):
+            raise cli.BrokerError(423,'Vault locked. Open the owner console to unlock it.')
+    attempts=[]
+    message={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'latchlane_collect','arguments':{'purpose':'Need a fixture','items':[{'name':'launch-failure','origin':'https://api.example.com'}]}}}
+    monkeypatch.setattr(cli,'Client',LockedClient)
+    monkeypatch.setattr(desktop,'open_app',lambda url: (attempts.append(url), (_ for _ in ()).throw(ValueError('headless fixture')))[1])
+    monkeypatch.setattr(sys,'stdin',io.StringIO(json.dumps(message)+'\n'))
+    cli.mcp()
+    reply=json.loads(capsys.readouterr().out)
+    data=json.loads(reply['result']['content'][0]['text'])
+    assert data['status']=='unlock_required' and data['names']==['launch-failure']
+    assert attempts==['http://127.0.0.1:19474/']

@@ -210,7 +210,7 @@ def test_owner_updates_key_without_returning_or_replacing_blank_value(setup):
     rid=req(a).json()['id']
     response=c.patch('/api/keys/sample',json=key_update(header='X-API-Key',prefix='',safe_paths=['/v2/models'],value=''),headers=HEAD)
     assert response.json()=={'ok':True,'name':'sample'} and SECRET not in response.text
-    assert app.state.vault.data['keys']['sample']=={'value':SECRET,'origin':'https://api.example.com','header':'X-API-Key','prefix':'','safe_paths':['/v2/models']}
+    assert app.state.vault.data['keys']['sample']=={'value':SECRET,'username':'','kind':'api_key','origin':'https://api.example.com','header':'X-API-Key','prefix':'','safe_paths':['/v2/models']}
     assert a.post('/api/requests/'+rid+'/consume').status_code==404
     assert 'value' not in c.get('/api/owner').json()['keys'][0]
     bad=c.patch('/api/keys/sample',json=key_update(safe_paths=['/read/../write']),headers=HEAD)
@@ -320,3 +320,110 @@ def test_failed_key_save_is_not_visible(setup,monkeypatch):
     monkeypatch.setattr(storage,'atomic_write',lambda *a,**k:(_ for _ in ()).throw(OSError('fixture disk full')))
     with pytest.raises(OSError):c.post('/api/keys',json={'name':'unsaved','value':SECRET,'origin':'https://api.example.com'},headers=HEAD)
     assert 'unsaved' not in app.state.vault.data['keys']
+
+
+def collection_body():
+    return {'purpose':'Configure two fixture services','items':[
+        {'name':'collect-api','origin':'https://api.example.com'},
+        {'name':'collect-password','kind':'password','origin':'https://accounts.example.com','header':'X-API-Key','prefix':'Bearer '},
+    ]}
+
+
+def test_passwords_are_unicode_lease_only_even_in_yolo(setup):
+    app,c,a,_=setup
+    value='fixture-password-\u2603'
+    rejected=c.post('/api/keys',json={'name':'site-password','kind':'password','username':'owner@example.com','value':value,'origin':'https://accounts.example.com','safe_paths':['/ignored']},headers=HEAD)
+    assert rejected.status_code==422 and value not in rejected.text
+    response=c.post('/api/keys',json={'name':'site-password','kind':'password','username':'owner@example.com','value':value,'origin':'https://accounts.example.com','header':'X-API-Key','prefix':'Bearer '},headers=HEAD)
+    assert response.status_code==200
+    stored=app.state.vault.data['keys']['site-password']
+    assert stored['kind']=='password' and stored['username']=='owner@example.com'
+    assert stored['header']=='Authorization' and stored['prefix']=='' and stored['safe_paths']==[]
+    assert c.post('/api/mode',json={'mode':'yolo'},headers=HEAD).status_code==200
+    http=a.post('/api/requests',json={'key':'site-password','path':'/','purpose':'Attempt HTTP password use'})
+    assert http.status_code==422 and value not in http.text
+    lease=a.post('/api/requests',json={'key':'site-password','kind':'lease','purpose':'Trusted child fixture'}).json()
+    assert lease['status']=='approved'
+    assert a.post('/api/requests/'+lease['id']+'/consume').json()['value']==value
+    listed=a.get('/api/keys').json()['keys']
+    assert next(item for item in listed if item['name']=='site-password') == {'name':'site-password','origin':'https://accounts.example.com','kind':'password'}
+    assert 'owner@example.com' not in a.get('/api/keys').text
+
+
+def test_password_kind_conversion_validates_retained_value(setup):
+    app,c,_,_=setup
+    unicode_value='fixture-password-\u2603'
+    assert c.post('/api/keys',json={'name':'unicode-password','kind':'password','value':unicode_value,'origin':'https://accounts.example.com'},headers=HEAD).status_code==200
+    before=dict(app.state.vault.data['keys']['unicode-password'])
+    conversion={'kind':'api_key','origin':'https://accounts.example.com','header':'Authorization','prefix':'','safe_paths':[]}
+    rejected=c.patch('/api/keys/unicode-password',json=conversion,headers=HEAD)
+    assert rejected.status_code==422 and unicode_value not in rejected.text
+    assert app.state.vault.data['keys']['unicode-password']==before
+
+    assert c.post('/api/keys',json={'name':'ascii-password','kind':'password','value':'fixture-ascii-password','origin':'https://accounts.example.com'},headers=HEAD).status_code==200
+    accepted=c.patch('/api/keys/ascii-password',json=conversion,headers=HEAD)
+    assert accepted.status_code==200
+    assert app.state.vault.data['keys']['ascii-password']['kind']=='api_key'
+
+
+def test_batch_and_collection_completion_are_atomic_and_secret_free(setup,monkeypatch):
+    import latchlane.vault as storage
+    app,c,a,_=setup
+    batch={'items':[{'name':'batch-one','value':'fixture-one','origin':'https://api.example.com'},{'name':'batch-two','value':'fixture-two','origin':'https://second.example.com'}]}
+    assert c.post('/api/keys/batch',json=batch,headers=HEAD).json()['names']==['batch-one','batch-two']
+    duplicate={'items':[{'name':'batch-three','value':'fixture-three','origin':'https://api.example.com'},{'name':'batch-three','value':'fixture-four','origin':'https://api.example.com'}]}
+    assert c.post('/api/keys/batch',json=duplicate,headers=HEAD).status_code==409
+    assert 'batch-three' not in app.state.vault.data['keys']
+
+    bad=collection_body()|{'value':'do-not-accept-this-secret'}
+    assert a.post('/api/collections',json=bad).status_code==422
+    bad_nested=collection_body();bad_nested['items'][0]['value']='do-not-accept-this-secret'
+    rejected=a.post('/api/collections',json=bad_nested)
+    assert rejected.status_code==422 and 'do-not-accept-this-secret' not in rejected.text
+    created=a.post('/api/collections',json=collection_body()).json()
+    ident=created['id']
+    assert created['owner_path']=='/?collection='+ident and created['status']=='pending'
+    agent_status=a.get('/api/collections/'+ident).json()
+    assert agent_status=={'id':ident,'status':'pending','names':['collect-api','collect-password'],'expires_at':created['expires_at']}
+    owner=c.get('/api/owner/collections/'+ident).json()
+    assert owner['agent']=='Fixture agent' and owner['items'][1]['header']=='Authorization' and owner['items'][1]['prefix']==''
+    complete={'items':[{'name':'collect-api','value':'fixture-api','origin':'https://api.example.com'},{'name':'collect-password','kind':'password','username':'owner@example.com','value':'fixture-pass-\u2603','origin':'https://accounts.example.com','header':'Authorization','prefix':''}]}
+    assert c.post('/api/owner/collections/'+ident+'/complete',json={'items':complete['items'][::-1]},headers=HEAD).status_code==422
+    actual=storage.atomic_write
+    monkeypatch.setattr(storage,'atomic_write',lambda *a,**k:(_ for _ in ()).throw(OSError('fixture disk full')))
+    with pytest.raises(OSError): c.post('/api/owner/collections/'+ident+'/complete',json=complete,headers=HEAD)
+    assert ident in app.state.collections and app.state.collections[ident]['status']=='pending'
+    assert 'collect-api' not in app.state.vault.data['keys']
+    monkeypatch.setattr(storage,'atomic_write',actual)
+    done=c.post('/api/owner/collections/'+ident+'/complete',json=complete,headers=HEAD)
+    assert done.status_code==200 and done.json()['status']=='completed'
+    result=a.get('/api/collections/'+ident)
+    assert result.json()['status']=='completed' and 'fixture-pass' not in result.text and 'owner@example.com' not in result.text
+    assert c.post('/api/owner/collections/'+ident+'/complete',json=complete,headers=HEAD).status_code==409
+
+
+def test_collections_are_client_owned_expire_and_clear_on_revoke_or_lock(setup):
+    app,c,a,_=setup
+    code=c.post('/api/invite',headers=HEAD).json()['code']
+    token=c.post('/api/pair',json={'code':code,'name':'Other agent'},headers=HEAD).json()['token']
+    other=TestClient(app,base_url='http://127.0.0.1:9473',headers=HEAD|{'Authorization':'Bearer '+token})
+    first=a.post('/api/collections',json=collection_body()).json()['id']
+    assert other.get('/api/collections/'+first).status_code==404
+    app.state.collections[first]['expires']=time.time()-1
+    assert a.get('/api/collections/'+first).status_code==410
+    active=a.post('/api/collections',json={'purpose':'Another service','items':[{'name':'other-collect','origin':'https://api.example.com'}]}).json()['id']
+    owner_client=c.get('/api/owner').json()['clients'][0]['id']
+    assert c.delete('/api/clients/'+owner_client,headers=HEAD).status_code==200
+    assert active not in app.state.collections and a.get('/api/collections/'+active).status_code==401
+    # A fresh paired client creates state which is erased by lock rather than
+    # surviving as a completion opportunity after owner access ends.
+    fresh=other.post('/api/collections',json={'purpose':'Locked state fixture','items':[{'name':'lock-collect','origin':'https://api.example.com'}]}).json()['id']
+    assert c.post('/api/lock',headers=HEAD).status_code==200
+    assert app.state.collections=={} and other.get('/api/collections/'+fresh).status_code==423
+
+
+def test_locked_vault_rejects_collection_without_creating_state(setup):
+    app,c,a,_=setup
+    assert c.post('/api/lock',headers=HEAD).status_code==200
+    response=a.post('/api/collections',json={'purpose':'Locked broker fixture','items':[{'name':'locked-collection','origin':'https://api.example.com'}]})
+    assert response.status_code==423 and app.state.collections=={}

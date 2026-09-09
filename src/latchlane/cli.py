@@ -20,8 +20,16 @@ from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 from . import __version__
 from .vault import Vault, VaultError, private_directory, private_read, atomic_write
+from .server import CollectionCreate
 
 PORT = 9473
+
+
+class BrokerError(ValueError):
+    """A safe broker response classification for callers that need the status."""
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
 
 def data_dir():
     return Path(os.environ.get("LATCHLANE_HOME", user_data_path("Latchlane", appauthor=False)))
@@ -69,24 +77,24 @@ def network_error(error, outcome_uncertain=False):
 
 def broker_error(status, path=""):
     if status == 401:
-        return ValueError("Agent is unpaired or revoked. Pair again from the owner console.")
+        return BrokerError(status, "Agent is unpaired or revoked. Pair again from the owner console.")
     if status == 403:
         if path.endswith("/consume"):
-            return ValueError("Approval was denied or already consumed. Create a new request if access is still needed.")
-        return ValueError("Broker denied the operation. An approval or pairing code may have expired; ask the owner to create a fresh one.")
+            return BrokerError(status, "Approval was denied or already consumed. Create a new request if access is still needed.")
+        return BrokerError(status, "Broker denied the operation. An approval or pairing code may have expired; ask the owner to create a fresh one.")
     if status == 404:
-        return ValueError("Broker no longer recognizes that key or request. It may have expired or already been consumed.")
+        return BrokerError(status, "Broker no longer recognizes that key or request. It may have expired or already been consumed.")
     if status == 410:
-        return ValueError("Approval expired. Create a new request; Latchlane will not retry it automatically.")
+        return BrokerError(status, "Approval expired. Create a new request; Latchlane will not retry it automatically.")
     if status == 423:
-        return ValueError("Vault locked. Open the owner console to unlock it.")
+        return BrokerError(status, "Vault locked. Open the owner console to unlock it.")
     if status in (502, 503, 504):
-        return ValueError("The provider could not be reached or its response was uncertain. Check provider state before retrying.")
+        return BrokerError(status, "The provider could not be reached or its response was uncertain. Check provider state before retrying.")
     if status == 429:
-        return ValueError("Broker is busy. Wait for pending requests to expire, then try again.")
+        return BrokerError(status, "Broker is busy. Wait for pending requests to expire, then try again.")
     if status == 422:
-        return ValueError("Broker rejected the request format. Check the command arguments and try again.")
-    return ValueError(f"Broker declined the operation (HTTP {status}). Check the owner console.")
+        return BrokerError(status, "Broker rejected the request format. Check the command arguments and try again.")
+    return BrokerError(status, f"Broker declined the operation (HTTP {status}). Check the owner console.")
 
 
 class Client:
@@ -224,6 +232,75 @@ def wait_operation(client, operation):
     raise ValueError("Approval expired. No automatic retry.")
 
 
+def collection_spec(path):
+    """Load an agent collection request without ever accepting credential data."""
+    try:
+        raw = path.read_bytes()
+        if len(raw) > 100000:
+            raise ValueError()
+        parsed = json.loads(raw)
+        return CollectionCreate.model_validate(parsed).model_dump()
+    except (OSError, ValueError, TypeError):
+        raise ValueError("Collection spec must be a metadata-only JSON request with recognized fields.") from None
+
+
+def collection_result(reply, names):
+    """A deliberately small public result shared by CLI and MCP."""
+    if not isinstance(reply, dict) or not isinstance(reply.get("id"), str) or reply.get("status") not in ("pending", "completed", "cancelled"):
+        raise ValueError("Broker returned an invalid collection response.")
+    return {"id": reply["id"], "status": reply["status"], "names": names}
+
+
+def open_collection_window(client, reply):
+    collection_id = reply.get("id") if isinstance(reply, dict) else None
+    # The host deliberately returns a relative path. Do not accept a URL from a
+    # network response as authority to open another origin or inject a ticket.
+    if not isinstance(collection_id, str) or reply.get("owner_path") != "/?collection=" + collection_id:
+        raise ValueError("Broker returned an invalid collection owner path.")
+    from .desktop import open_app
+    open_app(client.url + reply["owner_path"])
+
+
+def collect(args):
+    body = collection_spec(args.spec_file)
+    names = [item["name"] for item in body["items"]]
+    client = Client()
+    try:
+        reply = client.call("POST", "/api/collections", body)
+    except BrokerError as error:
+        # A collection must be paired and its server must verify that pairing.
+        # In wait mode, make the owner-unlock workflow one local browser action,
+        # then verify the host state and retry exactly once.
+        if not args.wait or error.status != 423:
+            raise
+        if not args.no_open:
+            from .desktop import open_app
+            open_app(client.url + "/")
+        unlock_deadline = time.monotonic() + 900
+        state = probe_broker(client.url, client.token)
+        while state.get("broker_state") != "ready" and time.monotonic() < unlock_deadline:
+            time.sleep(2)
+            state = probe_broker(client.url, client.token)
+        if state.get("broker_state") != "ready":
+            raise ValueError("Vault locked. Open the owner console to unlock it, then run collect again.") from None
+        reply = client.call("POST", "/api/collections", body)
+    result = collection_result(reply, names)
+    if not args.no_open:
+        open_collection_window(client, reply)
+    if not args.wait:
+        print(json.dumps(result))
+        return
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        status = client.call("GET", "/api/collections/" + result["id"])
+        result = collection_result(status, names)
+        if result["status"] != "pending":
+            print(json.dumps(result))
+            return
+    raise ValueError("Collection expired. No automatic retry.")
+
+
 def start(args):
     root=data_dir(); private_directory(root)
     with FileLock(str(root / "host.lock"), timeout=0):
@@ -334,11 +411,16 @@ def pair(args):
     print("Paired. Credential saved locally; its value was not displayed.")
 
 
-def mcp():
+def mcp(collections_only=False):
     client=Client()
-    tools=[{"name":"latchlane_keys","description":"List available credential names and destinations, never values.","inputSchema":{"type":"object","properties":{}}},
-      {"name":"latchlane_request","description":"Request an authenticated HTTPS operation. Approval is enforced by the broker. Use the returned ID with latchlane_consume.","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"]},"path":{"type":"string"},"body":{"type":"string"},"purpose":{"type":"string"}},"required":["key","path","purpose"]}},
-      {"name":"latchlane_consume","description":"Execute an approved request once. Pending requests return pending; do not repeatedly poll faster than every 2 seconds.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]
+    unlock_opened = False
+    tools=[{"name":"latchlane_keys","description":"List available credential names and destinations, never values.","annotations":{"readOnlyHint":True},"inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+      {"name":"latchlane_request","description":"Request an authenticated HTTPS operation. Approval is enforced by the broker. Use the returned ID with latchlane_consume.","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"]},"path":{"type":"string"},"body":{"type":"string"},"purpose":{"type":"string"}},"required":["key","path","purpose"],"additionalProperties":False}},
+      {"name":"latchlane_consume","description":"Execute an approved request once. Pending requests return pending; do not repeatedly poll faster than every 2 seconds.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":False}},
+      {"name":"latchlane_collect","description":"Ask the owner to add one or more named credentials. Send metadata only: names, kinds, HTTPS destinations, and purpose. It never accepts or returns credential values.","inputSchema":{"type":"object","properties":{"purpose":{"type":"string","minLength":1,"maxLength":300},"items":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"name":{"type":"string"},"kind":{"type":"string","enum":["api_key","password"]},"origin":{"type":"string"},"header":{"type":"string"},"prefix":{"type":"string"}},"required":["name","origin"],"additionalProperties":False}},"open_window":{"type":"boolean"}},"required":["purpose","items"],"additionalProperties":False}},
+      {"name":"latchlane_collection_status","description":"Read a collection request status and requested names. Only the paired requesting agent can read it; values and usernames are never returned.","annotations":{"readOnlyHint":True},"inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":False}}]
+    if collections_only:
+        tools = [tool for tool in tools if tool["name"] in ("latchlane_collect", "latchlane_collection_status")]
     for line in sys.stdin:
         msg={}
         try:
@@ -351,6 +433,8 @@ def mcp():
             elif method=="tools/list": result={"tools":tools}
             elif method=="tools/call":
                 p=msg.get("params",{}); a=p.get("arguments",{}); name=p.get("name")
+                if collections_only and name not in ("latchlane_collect", "latchlane_collection_status"):
+                    raise ValueError("This MCP server only accepts collection tools.")
                 if name=="latchlane_keys": data=client.call("GET","/api/keys")
                 elif name=="latchlane_request":
                     if set(a)-{"key","method","path","body","purpose"}: raise ValueError("Unsupported fields.")
@@ -359,6 +443,29 @@ def mcp():
                     rid=a["id"]
                     if not re.fullmatch(r"[A-Za-z0-9_-]{20,40}",rid): raise ValueError("Invalid request ID.")
                     data=client.call("POST","/api/requests/"+rid+"/consume")
+                elif name=="latchlane_collect":
+                    if not isinstance(a, dict) or set(a)-{"purpose","items","open_window"}: raise ValueError("Unsupported fields.")
+                    open_window = a.pop("open_window", True)
+                    if not isinstance(open_window, bool): raise ValueError("Invalid open_window.")
+                    body = CollectionCreate.model_validate(a).model_dump()
+                    try:
+                        reply = client.call("POST", "/api/collections", body)
+                    except BrokerError as error:
+                        if error.status != 423: raise
+                        if open_window and not unlock_opened:
+                            from .desktop import open_app
+                            unlock_opened = True
+                            try: open_app(client.url + "/")
+                            except (OSError, ValueError): pass
+                        data = {"status":"unlock_required", "names":[item["name"] for item in body["items"]], "message":"The owner must unlock Latchlane, then retry this collection request."}
+                    else:
+                        unlock_opened = False
+                        if open_window: open_collection_window(client, reply)
+                        data = collection_result(reply, [item["name"] for item in body["items"]])
+                elif name=="latchlane_collection_status":
+                    if not isinstance(a, dict) or set(a)!={"id"} or not isinstance(a["id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{20,40}",a["id"]): raise ValueError("Invalid collection ID.")
+                    reply = client.call("GET", "/api/collections/" + a["id"])
+                    data = collection_result(reply, reply.get("names", []))
                 else: raise ValueError("Unknown tool.")
                 if isinstance(data,dict) and "value" in data: raise ValueError("Raw keys are not available through MCP.")
                 result={"content":[{"type":"text","text":json.dumps(data)}]}
@@ -380,8 +487,9 @@ def main():
     sub.add_parser("keys",help="List names without revealing values")
     s=sub.add_parser("request",help="Make an authenticated API request");s.add_argument("key");s.add_argument("path");s.add_argument("--method",default="GET");s.add_argument("--purpose",required=True);s.add_argument("--body-file",type=Path)
     s=sub.add_parser("run",help="Request a raw key and pass it to one trusted child process");s.add_argument("key");s.add_argument("variable");s.add_argument("--purpose",required=True);s.add_argument("argv",nargs=argparse.REMAINDER)
+    s=sub.add_parser("collect",help="Ask the owner to add one or more metadata-only credential requests");s.add_argument("--spec-file",type=Path,required=True);s.add_argument("--wait",action="store_true",help="Poll collection status for up to 15 minutes");s.add_argument("--no-open",action="store_true",help="Do not open the local owner window")
     s=sub.add_parser("capture",help="Open the owner’s named clipboard capture form");s.add_argument("name");s.add_argument("--origin",default="");s.add_argument("--header",choices=["Authorization","X-API-Key","API-KEY","api-key","x-goog-api-key"]);s.add_argument("--prefix",choices=["none","bearer","basic"]);s.add_argument("--url",default=f"http://127.0.0.1:{PORT}")
-    sub.add_parser("mcp",help="Run the MCP stdio server for a paired agent")
+    s=sub.add_parser("mcp",help="Run the MCP stdio server for a paired agent");s.add_argument("--collections-only",action="store_true",help="Expose only metadata-only credential collection tools")
     s=sub.add_parser("install-skill",help="Install the bundled skill for Codex or another agent");s.add_argument("--directory",type=Path,default=Path.home()/".codex/skills/latchlane")
     s=sub.add_parser("owner",help="Open the local owner console; use --url for a custom port");s.add_argument("--url",help="Local or private broker origin, for example http://127.0.0.1:9474")
     s=sub.add_parser("doctor",help="Check local readiness without reading key values");s.add_argument("--url",help="Local or private broker origin to probe")
@@ -404,6 +512,7 @@ def main():
             result=wait_operation(Client(),{"key":args.key,"kind":"lease","purpose":args.purpose})
             env=os.environ.copy();env[args.variable]=result["value"]
             sys.exit(subprocess.run(argv,env=env).returncode)
+        elif args.command=="collect": collect(args)
         elif args.command=="capture":
             if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",args.name): raise ValueError("Use a lowercase key name.")
             from .desktop import app
@@ -427,7 +536,7 @@ def main():
                     print("Owner window opened. If the one-use session expired, restart the host to issue a fresh one.")
                 else:
                     webbrowser.open(f"http://127.0.0.1:{PORT}/")
-        elif args.command=="mcp": mcp()
+        elif args.command=="mcp": mcp(args.collections_only)
         elif args.command=="install-skill":
             source=Path(__file__).with_name("SKILL.md")
             if not source.exists(): source=Path(__file__).parents[2]/"skills/latchlane/SKILL.md"

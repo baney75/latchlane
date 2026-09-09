@@ -17,6 +17,8 @@
 <p align="center">
   <a href="#get-started">Get started</a> ·
   <a href="docs/getting-started.md">Guide</a> ·
+  <a href="docs/password-managers.md">Password managers</a> ·
+  <a href="docs/agents.md">Agent integrations</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="https://github.com/baney75/latchlane/issues">Help & feedback</a>
 </p>
@@ -42,12 +44,12 @@ chat. Do not copy, migrate, print, or ask me to share any secret.
 Or start it yourself with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+:
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.2.1'
+uv tool install 'git+https://github.com/baney75/latchlane@v0.3.0'
 latchlane install-app
 ```
 
 This opens Latchlane in your normal supported browser profile, including its existing
-cookies and extensions. Create a passphrase, choose **Add a key**, name it, and choose
+cookies and extensions. Create a passphrase, choose **+ Add credential**, name it, and choose
 **Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when
 the form is complete. Browsers that block clipboard watching offer a masked paste field.
 Later, open the Latchlane launcher from your Applications or Start Menu. If you use
@@ -79,6 +81,24 @@ latchlane request my-service /v1/models --purpose 'List available models'
 ```
 
 The [MCP integration](docs/getting-started.md#mcp) exposes the same brokered workflow. For a trusted SDK that needs an environment variable, [`latchlane run`](docs/getting-started.md#pair-an-agent) can release a key directly to one child process. That process can read or retain it.
+
+## Add several credentials with owner review
+
+An agent can submit a metadata-only collection request with `latchlane collect
+--spec-file REQUEST.json --wait`. The request names the credentials, their type, and their
+HTTPS destinations. It never includes a value, username, password, or token. The
+owner reviews each requested destination and explicitly saves the requested batch in the local
+console. The agent only receives a collection ID, status, and names.
+
+Owners can save API keys and website passwords. Passwords are Unicode-capable and
+can only be released through an owner-controlled raw lease to a trusted child
+process. Latchlane never sends a website password as an HTTP header, even in YOLO.
+For importing an owner-selected CSV from 1Password, Bitwarden, Apple Passwords, or
+another password manager, read [Password-manager imports](docs/password-managers.md).
+
+The [agent integration guide](docs/agents.md) covers the metadata-only MCP mode,
+Hermes setup commands, and a private ChatGPT tunnel command. Those examples prepare
+local integrations only; they do not connect an account or create a public relay.
 
 ## One vault, across your devices
 

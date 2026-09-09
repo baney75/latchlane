@@ -1,12 +1,12 @@
 # Security model
 
-Latchlane 0.2 is an early public release. It has automated boundary tests, but has
+Latchlane 0.3 is an early public release. It has automated boundary tests, but has
 not received an independent security audit. Do not infer certification from the
 interface, encryption algorithm, or the presence of tests.
 
 ## What it protects
 
-- The vault encrypts all stored keys, agent-token hashes, policy and audit data
+- The vault encrypts all stored API keys, website passwords, agent-token hashes, policy and audit data
   with AES-256-GCM, a random 96-bit nonce on each write, and version-bound associated
   data. The key is derived from the owner passphrase using scrypt (N=131072, r=8,
   p=1, a random 128-bit salt). A stolen ciphertext file requires the passphrase.
@@ -26,6 +26,15 @@ interface, encryption algorithm, or the presence of tests.
 - Always ask is the default. Auto approve uses exact owner-selected GET paths,
   without queries or bodies. It does not trust agent-supplied risk labels.
   YOLO intentionally allows all paired agents to use all keys without approval.
+- Website passwords are Unicode-capable and lease-only. The broker rejects every
+  attempt to use a password as an HTTP credential, including in YOLO. A raw lease
+  still hands that password to a trusted child process, so its protections end at
+  the child boundary.
+- A paired agent can make a bounded collection request containing only names,
+  kinds, destinations, headers, prefixes, and purpose. It cannot submit a value,
+  username, route, or extra field. Collection state is local memory, expires after
+  15 minutes, is client-owned, and is cleared when that client is revoked or the
+  vault locks. Completion is an owner-only, atomic save.
 - Approvals are bound to one immutable operation and one agent identity, expire
   after five minutes, and are consumed before execution. Retrying an uncertain
   write requires a fresh request. Mode changes, key removal and agent revocation
@@ -53,6 +62,17 @@ interface, encryption algorithm, or the presence of tests.
   static interface files and owner-session cookies on that device. They do not contain
   vault ciphertext or agent credentials, but browser extensions and session cookies are
   part of the local device boundary.
+- CSV exports from password managers are plaintext files. Latchlane reads only a
+  file the owner selects in the owner console, does not upload the file to a
+  third-party service, and clears its browser import state after cancel, save,
+  lock, logout, or page hide. Only selected reviewed credentials are sent to the
+  configured vault host, which may be another computer through Tailscale. The
+  original export remains the owner's responsibility. It cannot erase other
+  programs' copies, browser downloads, or filesystem backups.
+- Browser and password-manager autofill are origin-controlled by the browser and
+  extension. A Latchlane page cannot scrape or automatically read another site's
+  saved login. Passkeys, TOTP values, security questions, custom fields, and
+  proprietary export formats are outside the CSV importer.
 - A provider is trusted to receive its key. Literal/common-format echo redaction
   helps with accidental disclosure; a malicious provider can encode a key in ways
   that evade it. Auto approve GET routes can still have side effects if the provider

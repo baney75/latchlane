@@ -14,6 +14,7 @@
     <link rel="apple-touch-icon" href="/assets/icons/mark-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/assets/app.css" />
+    <script src="/assets/credentials.js" defer></script>
     <script src="/assets/app.js" defer></script>
   </head>
   <body>
@@ -109,8 +110,9 @@
             >
             <h1>Your private workspace<span class="dot">.</span></h1>
           </div>
-          <button class="primary" id="add">+ Add a key</button>
+          <div class="credential-actions"><button class="primary" id="add">+ Add credential</button><button class="secondary" id="import-credentials">Import from a password manager</button></div>
         </div>
+        <section id="collections-panel" class="hidden" aria-labelledby="collections-title"><div class="section-label"><h2 id="collections-title">Your agent needs a few things</h2></div><div id="collections-list"></div></section>
         <div class="mode-panel">
           <div>
             <span class="eyebrow">YOUR PACE</span>
@@ -143,7 +145,7 @@
         <div class="workspace-grid">
           <section class="key-section">
             <div class="section-label">
-              <h2>Your keys <span id="key-count" class="count">0</span></h2>
+              <h2>Your credentials <span id="key-count" class="count">0</span></h2>
               <span class="subtle">Values stay hidden</span>
             </div>
             <div id="keys"></div>
@@ -249,6 +251,7 @@
           Name the key and its API destination. Then paste it here.
         </p>
         <div id="key-fields">
+          <label for="key-kind">What are you adding?</label><select id="key-kind"><option value="api_key">API key</option><option value="password">Login password</option></select>
           <label for="key-name">Key name</label
           ><input
             id="key-name"
@@ -256,14 +259,14 @@
             pattern="[a-z0-9][a-z0-9_-]{0,63}"
             maxlength="64"
             required
-          /><label for="key-origin">API origin</label
+          /><label for="key-origin" id="key-origin-label">API origin</label
           ><input
             id="key-origin"
             type="url"
             placeholder="https://api.example.com"
             required
           />
-          <div class="two-cols">
+          <div class="two-cols" id="key-auth-options">
             <div>
               <label for="key-header">Authentication</label
               ><select id="key-header">
@@ -283,9 +286,11 @@
               </select>
             </div>
           </div>
+          <div id="key-login-fields" class="hidden"><label for="key-username">Username or email</label><input id="key-username" name="username" autocomplete="section-single username" maxlength="320"/><p class="fine">Use your password manager’s fill or copy action to select the matching login. Confirm the website above; a saved login for another site may not be suggested automatically.</p></div>
           <label for="key-value">Secret value</label
           ><input
             id="key-value"
+            name="password"
             type="password"
             autocomplete="off"
             spellcheck="false"
@@ -304,7 +309,7 @@
             Clipboard access stays on this device. Paste manually if your
             browser blocks access.
           </p>
-          <details>
+          <details id="key-trusted-options">
             <summary>Trusted reads for Auto approve</summary>
             <p class="fine">
               Only add routes you know are read-only. GET alone does not
@@ -454,6 +459,33 @@
         recovery screen instead of a cached vault page.
       </p>
       <button class="primary wide" data-close="app-dialog">Got it</button>
+    </dialog>
+
+    <dialog id="collection-dialog" aria-labelledby="collection-title">
+      <form id="collection-form">
+        <div class="dialog-head"><span class="eyebrow">FILL HERE. KEEP IT OUT OF CHAT.</span><button class="close" type="button" data-close="collection-dialog" aria-label="Close">×</button></div>
+        <h2 id="collection-title">Add credentials for your agent</h2>
+        <p id="collection-purpose"></p><p class="fine" id="collection-expiry"></p>
+        <p class="collection-boundary">Check each destination and select its saved login or paste its key. Saving reports completion to the agent. Your current access mode still controls how it can use these credentials.</p>
+        <div id="collection-fields"></div>
+        <div class="credential-actions"><button id="collection-save" class="primary" type="submit">Encrypt &amp; save all</button><button id="collection-cancel" class="secondary" type="button">Decline request</button></div>
+      </form>
+    </dialog>
+    <dialog id="import-dialog" aria-labelledby="import-title">
+      <div class="dialog-head"><span class="eyebrow">BRING THE LOGINS YOU CHOOSE</span><button class="close" type="button" data-close="import-dialog" aria-label="Close">×</button></div>
+      <h2 id="import-title">Import from your password manager.</h2>
+      <p>1Password, Bitwarden, Apple Passwords, or another manager’s CSV export. Review and select up to 20 credentials at a time.</p>
+      <p class="fine">The file is read in this browser. Only entries you select and save are sent to your vault host. The original export may contain plaintext passwords; remove it yourself when you no longer need it.</p>
+      <label for="import-file">Choose a CSV export (up to 1 MiB, 200 entries)</label><input id="import-file" type="file" accept=".csv,text/csv"/>
+      <div id="import-mapping" class="hidden">
+        <h3>Check the columns</h3><p class="fine">Common formats are recognized automatically. For other formats, choose the column numbers from your export. Password values are never shown in this preview.</p>
+        <div class="import-map-grid" id="import-map-fields"></div><button id="import-review" class="secondary" type="button">Review entries</button>
+      </div>
+      <div id="import-review-panel" class="hidden">
+        <div class="credential-actions"><h3 id="import-summary"></h3><button id="import-select-all" class="quiet" type="button">Select first 20</button><button id="import-select-none" class="quiet" type="button">Select none</button></div>
+        <p class="fine">Nothing is selected automatically. Names must be unique. Website passwords are used only through an approved child process; they are never sent as API headers.</p>
+        <form id="import-form"><div id="import-entries"></div><button id="import-save" class="primary wide" type="submit" disabled>Choose entries to import</button></form>
+      </div>
     </dialog>
   </body>
 </html>
