@@ -7,18 +7,23 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from typing import Literal
+from urllib.parse import unquote, urlsplit
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 from .vault import Vault, VaultError
 from .network import validate_origin, perform, NetworkError
+from . import __version__
 
 STATIC = Path(__file__).parent / "static"
+SESSION_SECONDS = {"day": 24 * 3600, "remember": 30 * 24 * 3600}
+MAX_OWNER_SESSIONS = 20
 
 class Password(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
+    session_mode: Literal["day", "remember"] = "day"
 
 class KeyInput(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -27,6 +32,13 @@ class KeyInput(BaseModel):
     header: str = "Authorization"
     prefix: str = "Bearer "
     safe_paths: list[str] = Field(default_factory=list, max_length=30)
+
+class KeyUpdate(BaseModel):
+    origin: str = Field(max_length=300)
+    header: str = "Authorization"
+    prefix: str = "Bearer "
+    safe_paths: list[str] = Field(default_factory=list, max_length=30)
+    value: str | None = Field(default=None, max_length=16384)
 
 class Operation(BaseModel):
     key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -53,7 +65,25 @@ def digest(value): return hashlib.sha256(value.encode()).hexdigest()
 def valid_path(path):
     if not path.startswith("/") or path.startswith("//") or "\\" in path or "#" in path:
         return False
-    return all(32 < ord(c) < 127 for c in path)
+    if not all(32 < ord(c) < 127 for c in path):
+        return False
+
+    # HTTP servers normalize only the path. A fixed number of decoding passes
+    # catches nested dot encodings without repeatedly decoding attacker input.
+    candidate = urlsplit(path).path
+    for _ in range(2):
+        if _unsafe_path_segments(candidate):
+            return False
+        candidate = unquote(candidate)
+    return not _unsafe_path_segments(candidate) and candidate == unquote(candidate)
+
+
+def _unsafe_path_segments(path):
+    if "\\" in path or any(segment in (".", "..") for segment in path.split("/")):
+        return True
+    # Encoded separators can create dot segments after provider-side decoding.
+    lowered = path.lower()
+    return "%2f" in lowered or "%5c" in lowered
 
 
 def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mode="ask"):
@@ -88,8 +118,26 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
         try: (directory / "owner-ticket.local.json").unlink(missing_ok=True)
         except OSError: pass  # Revoked token is harmless; cleanup is best effort.
 
+    def prune_sessions(now=None, keep=None):
+        with app.state.lock:
+            now = time.time() if now is None else now
+            app.state.sessions = {
+                ident: session for ident, session in app.state.sessions.items()
+                if isinstance(session, dict) and session.get("expires", 0) > now
+            }
+            if len(app.state.sessions) > MAX_OWNER_SESSIONS:
+                for ident in sorted(app.state.sessions, key=lambda item: app.state.sessions[item]["expires"]):
+                    if ident != keep:
+                        del app.state.sessions[ident]
+                        if len(app.state.sessions) == MAX_OWNER_SESSIONS:
+                            break
+
+    def clear_owner_cookie(response, request):
+        response.delete_cookie("latchlane_owner", httponly=True, samesite="strict", secure=request.url.scheme == "https")
+
     @app.middleware("http")
     async def boundary(request, call_next):
+        prune_sessions()
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"detail": "Unrecognized host."}, status_code=403)
         origin = request.headers.get("origin")
@@ -122,10 +170,13 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
         if v.data is None: raise HTTPException(423, "Vault is locked. Open the owner console.")
 
     def owner(request):
-        token = request.cookies.get("latchlane_owner", "")
-        if app.state.sessions.get(digest(token), 0) < time.time():
-            raise HTTPException(401, "Sign in to the owner console.")
-        require_unlocked()
+        with app.state.lock:
+            token = request.cookies.get("latchlane_owner", "")
+            session_data = app.state.sessions.get(digest(token))
+            if not session_data or session_data["expires"] < time.time():
+                raise HTTPException(401, "Sign in to the owner console.")
+            require_unlocked()
+            return session_data
 
     def client(request):
         require_unlocked()
@@ -139,23 +190,63 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
         v.data["audit"].append({"time": int(time.time()), "event": event, "key": name, "agent": agent})
         v.data["audit"] = v.data["audit"][-300:]
 
-    def session(request):
-        token = secrets.token_urlsafe(32)
-        app.state.sessions[digest(token)] = time.time() + 8 * 3600
+    def session(request, mode="day"):
+        with app.state.lock:
+            now = time.time()
+            prune_sessions(now)
+            token = secrets.token_urlsafe(32)
+            expiry = now + SESSION_SECONDS[mode]
+            ident = digest(token)
+            app.state.sessions[ident] = {"expires": expiry, "mode": mode}
+            prune_sessions(now, keep=ident)
         response = JSONResponse({"ok": True})
-        response.set_cookie("latchlane_owner", token, httponly=True, samesite="strict", secure=request.url.scheme == "https", max_age=8*3600)
+        response.set_cookie("latchlane_owner", token, httponly=True, samesite="strict", secure=request.url.scheme == "https", max_age=SESSION_SECONDS[mode])
         return response
+
+    def key_metadata(origin, header, prefix, safe_paths):
+        try: origin = validate_origin(origin)
+        except ValueError as e: raise HTTPException(422, str(e))
+        if header not in ("Authorization", "X-API-Key", "API-KEY", "api-key", "x-goog-api-key"):
+            raise HTTPException(422, "Unsupported authentication header.")
+        if prefix not in ("", "Bearer ", "Basic "):
+            raise HTTPException(422, "Unsupported prefix.")
+        if any(not valid_path(path) or "?" in path or "%" in path for path in safe_paths):
+            raise HTTPException(422, "Auto-approve paths must be exact paths without query strings or escapes.")
+        return origin
+
+    def key_value(value):
+        if any(ord(c) < 32 or ord(c) > 126 for c in value):
+            raise HTTPException(422, "Key must contain printable ASCII only.")
 
     @app.get("/")
     def index(): return FileResponse(STATIC / "index.html")
 
     @app.get("/assets/{name}")
     def asset(name: str):
-        if name not in ("app.js", "app.css", "mark.svg"): raise HTTPException(404)
+        if name not in ("app.js", "app.css", "mark.svg", "offline.css"): raise HTTPException(404)
         return FileResponse(STATIC / name)
 
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/sw.js")
+    def service_worker():
+        response = FileResponse(STATIC / "sw.js", media_type="application/javascript")
+        response.headers["Service-Worker-Allowed"] = "/"
+        return response
+
+    @app.get("/offline.html")
+    def offline():
+        return FileResponse(STATIC / "offline.html", media_type="text/html")
+
+    @app.get("/assets/icons/{name}")
+    def icon(name: str):
+        if name not in ("mark-192.png", "mark-512.png"): raise HTTPException(404)
+        return FileResponse(STATIC / "icons" / name, media_type="image/png")
+
     @app.get("/api/status")
-    def status(): return {"initialized": v.path.exists(), "locked": v.data is None, "version": "0.1.1", "initial_mode": initial_mode}
+    def status(): return {"initialized": v.path.exists(), "locked": v.data is None, "version": __version__, "initial_mode": initial_mode}
 
     @app.post("/api/init")
     def initialize(body: Password, request: Request):
@@ -165,7 +256,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
             v.initialize(body.password, mode=initial_mode)
             app.state.bootstrap = secrets.token_urlsafe(32)
             discard_owner_ticket()
-            return session(request)
+            return session(request, body.session_mode)
 
     @app.post("/api/login")
     def login(body: Password, request: Request):
@@ -175,7 +266,7 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
             if len(app.state.login_attempts) >= 5: raise HTTPException(429, "Wait a minute before trying again.")
             app.state.login_attempts.append(now)
             v.unlock(body.password)
-            return session(request)
+            return session(request, body.session_mode)
 
     @app.post("/api/local-session")
     def local_session(request: Request):
@@ -187,20 +278,30 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
             discard_owner_ticket()
             return session(request)
 
+    @app.post("/api/logout")
+    def logout(request: Request):
+        with app.state.lock:
+            app.state.sessions.pop(digest(request.cookies.get("latchlane_owner", "")), None)
+        response = JSONResponse({"ok": True})
+        clear_owner_cookie(response, request)
+        return response
+
     @app.post("/api/lock")
     def lock(request: Request):
         with transaction():
             owner(request)
             v.lock(); app.state.sessions.clear(); app.state.pending.clear(); app.state.invites.clear()
-            return {"ok": True}
+            response = JSONResponse({"ok": True})
+            clear_owner_cookie(response, request)
+            return response
 
     @app.get("/api/owner")
     def dashboard(request: Request):
         with transaction():
-            owner(request)
+            session_data = owner(request)
             clean = [{k: val for k, val in item.items() if k != "value"} | {"name": name} for name, item in v.data["keys"].items()]
             pending = [{"id": rid, "operation": r["op"], "agent": v.data["clients"].get(r["client"], {}).get("name", "revoked"), "expires": r["expires"]} for rid, r in app.state.pending.items() if r["status"] == "pending" and r["expires"] > time.time()]
-            return {"mode": v.data["mode"], "keys": clean, "clients": [{"id": ident, "name": data["name"]} for ident, data in v.data["clients"].items()], "pending": pending, "audit": v.data["audit"][-20:][::-1], "revision": v.data["revision"]}
+            return {"mode": v.data["mode"], "keys": clean, "clients": [{"id": ident, "name": data["name"]} for ident, data in v.data["clients"].items()], "pending": pending, "audit": v.data["audit"][-20:][::-1], "revision": v.data["revision"], "session_expires": session_data["expires"], "session_mode": session_data["mode"]}
 
     @app.post("/api/mode")
     def mode(body: Mode, request: Request):
@@ -219,17 +320,26 @@ def create_app(directory: Path, port=9473, hosts=(), bootstrap=None, initial_mod
             owner(request)
             if body.name in v.data["keys"]: raise HTTPException(409, "Name exists. Use a new name to rotate safely.")
             if len(v.data["keys"]) >= 200: raise HTTPException(409, "Vault key limit reached.")
-            try: origin = validate_origin(body.origin)
-            except ValueError as e: raise HTTPException(422, str(e))
-            if body.header not in ("Authorization", "X-API-Key", "API-KEY", "api-key", "x-goog-api-key"):
-                raise HTTPException(422, "Unsupported authentication header.")
-            if body.prefix not in ("", "Bearer ", "Basic "): raise HTTPException(422, "Unsupported prefix.")
-            if any(ord(c) < 32 or ord(c) > 126 for c in body.value): raise HTTPException(422, "Key must contain printable ASCII only.")
-            if any(not valid_path(p) or "?" in p or "%" in p for p in body.safe_paths):
-                raise HTTPException(422, "Auto-approve paths must be exact paths without query strings or escapes.")
+            origin = key_metadata(body.origin, body.header, body.prefix, body.safe_paths)
+            key_value(body.value)
             v.data["keys"][body.name] = {"value": body.value, "origin": origin, "header": body.header, "prefix": body.prefix, "safe_paths": body.safe_paths}
             audit("key:added", body.name); v.save()
             return {"ok": True, "name": body.name}
+
+    @app.patch("/api/keys/{name}")
+    def update_key(name: str, body: KeyUpdate, request: Request):
+        with transaction():
+            owner(request)
+            current = v.data["keys"].get(name)
+            if not current: raise HTTPException(404)
+            origin = key_metadata(body.origin, body.header, body.prefix, body.safe_paths)
+            value = current["value"] if body.value in (None, "") else body.value
+            if body.value not in (None, ""):
+                key_value(value)
+            v.data["keys"][name] = {"value": value, "origin": origin, "header": body.header, "prefix": body.prefix, "safe_paths": body.safe_paths}
+            app.state.pending = {rid: pending for rid, pending in app.state.pending.items() if pending["op"]["key"] != name}
+            audit("key:updated", name); v.save()
+            return {"ok": True, "name": name}
 
     @app.delete("/api/keys/{name}")
     def delete_key(name: str, request: Request):

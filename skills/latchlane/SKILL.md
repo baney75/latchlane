@@ -7,31 +7,42 @@ description: Set up and use Latchlane to store API keys through local clipboard 
 
 Use the installed `latchlane` CLI. If missing, read the project's README and
 SECURITY.md at https://github.com/baney75/latchlane before installation. Install
-with `uv tool install 'git+https://github.com/baney75/latchlane@v0.1.1'` after reviewing
+with `uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'` after reviewing
 the source and environment. Use supported Python 3.11+ on macOS, Windows or Linux.
 Phones/tablets use the browser console through a Tailscale-connected host.
 
 ## First setup
 
-Start `latchlane start` with a yielding process tool; it opens the local owner
-console. Keep the process running while the user creates a vault. The user enters
-their passphrase in that console, never in chat. Default to **Always ask**. Switch
-to Auto approve or YOLO only on an explicit user choice; the modes are enforced by
-the broker. Never use owner credentials to bypass an agent approval.
+For a first-time local setup, run `latchlane install-app`. It installs and opens the
+dedicated Latchlane launcher in one command. The user enters their passphrase in the
+owner screen, never in chat. Use `latchlane app` for later launches. Default to
+**Always ask**. Switch to Auto approve or YOLO only on an explicit user choice; the
+modes are enforced by the broker. Never use owner credentials to bypass an agent
+approval. Use `latchlane start` only when the user needs a technical host process.
 
 If the user explicitly requests unattended operation, explain that its local
 unlock file grants vault access to the same OS user. `latchlane init --unattended`
 is an opt-in convenience, not a strong boundary against local agents. An untrusted
 agent should use a different OS account/device than the vault host.
 
-Use `latchlane doctor` for readiness. Never dump the state directory, environment,
-clipboard, credential files, request headers, or browser cookies into tool output.
+Use `latchlane doctor` for readiness. It checks the reachable broker and pairing,
+not whether a provider accepts a stored credential. `agent_pairing_valid: null`
+means the pairing could not be checked, for example because the vault is locked or
+the broker is unavailable. Use `latchlane doctor --url http://127.0.0.1:PORT` for a
+custom local port, and `latchlane owner --url http://127.0.0.1:PORT` to open that
+host’s console. Never dump the state directory, environment, clipboard, credential
+files, request headers, or browser cookies into tool output.
 Do not import existing secrets unless requested. The installer contains no keys.
 
 ## Store a named key
 
 Use a descriptive lowercase name. Open `latchlane capture NAME --origin HTTPS_ORIGIN`.
-The user signs into the owner console and confirms the API origin/header. Guide
+When known, add `--header` and `--prefix none|bearer|basic`; these only prefill the
+owner-visible authentication metadata and never accept a secret argument. Omit them
+to retain the capture form defaults.
+The user signs into the owner console and confirms the API origin, header, and
+prefix. Latchlane uses that configured header with an optional `Bearer ` or `Basic `
+prefix; it does not infer provider authentication formats. Guide
 them to **Watch next copy** before copying the key, then return to that window.
 The browser saves the next changed value when the form is complete. If watching is
 unsupported, use **Paste from clipboard** or the masked input and **Encrypt & save**.
@@ -65,9 +76,10 @@ This releases a raw key to the child; inspect that child first and prevent crede
 logging. Raw-key use always asks in Auto approve; YOLO deliberately bypasses prompts.
 The child can retain the key, so broker revocation cannot recall it afterward.
 
-For MCP use `latchlane mcp`: list keys, request an operation, then consume its ID.
-Do not poll faster than every two seconds. MCP provides brokered HTTP only, no raw
-key tool. Stored access never authorizes unrelated destinations or actions.
+For MCP use `latchlane mcp` as a stdio server: list keys, request an operation,
+then consume its ID. `latchlane mcp --help` describes the command. Do not poll
+faster than every two seconds. MCP provides brokered HTTP only, no raw key tool.
+Stored access never authorizes unrelated destinations or actions.
 
 ## Optional Tailscale sync
 

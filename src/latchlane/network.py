@@ -34,14 +34,15 @@ class PinnedHTTPS(http.client.HTTPSConnection):
 
 
 def perform(key, operation):
-    host = urlsplit(key["origin"]).hostname
-    addresses = {info[4][0] for info in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
-    if not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
-        raise NetworkError("Destination must resolve only to public IP addresses.")
-    connection = PinnedHTTPS(host, sorted(addresses)[0])
-    body = operation.get("body", "").encode()
-    headers = {key["header"]: key["prefix"] + key["value"], "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Latchlane/0.1"}
+    connection = None
     try:
+        host = urlsplit(key["origin"]).hostname
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+        if not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
+            raise NetworkError("Destination must resolve only to public IP addresses.")
+        connection = PinnedHTTPS(host, sorted(addresses)[0])
+        body = operation.get("body", "").encode()
+        headers = {key["header"]: key["prefix"] + key["value"], "Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Latchlane/0.1"}
         connection.request(operation["method"], operation["path"], body=body or None, headers=headers)
         response = connection.getresponse()
         if 300 <= response.status < 400: raise NetworkError("Redirect blocked; credentials were not forwarded.")
@@ -55,4 +56,7 @@ def perform(key, operation):
         return {"status": response.status, "body": text}
     except NetworkError: raise
     except Exception: raise NetworkError("Provider connection failed; automatic retry disabled.") from None
-    finally: connection.close()
+    finally:
+        if connection is not None:
+            try: connection.close()
+            except Exception: pass

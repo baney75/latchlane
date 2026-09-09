@@ -19,11 +19,30 @@ on the vault port. Tailscale grants should limit reachability to your intended d
 
 ## What “sync” means
 
-All devices use the same live vault through encrypted Tailscale connections. Changes
-show up in browser consoles within four seconds; agent calls see the current policy.
+All devices use the same live vault through encrypted Tailscale connections. Agent
+calls see the current policy. Browser consoles poll while connected, so refresh time
+depends on their connection and browser throttling; no four-second guarantee applies.
 Agent computers receive access tokens, not a copy of the master decryption key.
 No offline vault copies are created. If you need independent offline replicas,
-Latchlane 0.1 does not provide that feature.
+Latchlane does not provide that feature.
+
+## Install the owner app
+
+On a Mac vault host, `latchlane install-app` creates a searchable
+`~/Applications/Latchlane.app` launcher and opens it. Later launches use the same
+dedicated app window and browser profile. It starts a local host in the background
+when one is not running; it does not install an OS autostart service.
+
+On Linux, the same command creates a per-user `.desktop` launcher under the XDG data
+directory. It uses the default browser only when that browser is a supported Chromium
+browser. Custom `XDG_DATA_HOME` and `XDG_DATA_DIRS` locations are respected when
+looking up the default browser. If the default is unsupported, such as Firefox,
+Latchlane does not substitute another browser; run `latchlane owner` and keep the
+console open in that browser. On macOS, Safari users can choose Add to Dock.
+
+On iPhone, iPad, and Android, open the console in the device browser and use its
+install or Add to Home Screen control when available. The installed web app still
+uses the same online vault host; it is not an offline replica.
 
 ## OAuth, precisely
 
@@ -47,6 +66,7 @@ The UI never claims a clipboard was cleared if that operation failed.
 
 For first setup on a headless server, run `latchlane init` in a private terminal.
 Start with `latchlane start --no-open`, then use Tailscale to reach the console and
-unlock the vault. The foreground host stops when its process exits. Use your OS's
-service manager if persistent operation is wanted; the CLI does not silently
-install a background service. `--unattended` is a separate, explicit trust choice.
+unlock the vault. `latchlane start` remains a foreground host and stops when its
+process exits. Use your OS's service manager if persistent operation is wanted; the
+CLI does not silently install an autostart service. `--unattended` is a separate,
+explicit trust choice.

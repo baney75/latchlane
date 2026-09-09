@@ -1,6 +1,6 @@
 # Security model
 
-Latchlane 0.1 is an early public release. It has automated boundary tests, but has
+Latchlane 0.2 is an early public release. It has automated boundary tests, but has
 not received an independent security audit. Do not infer certification from the
 interface, encryption algorithm, or the presence of tests.
 
@@ -16,7 +16,9 @@ interface, encryption algorithm, or the presence of tests.
 - The owner controls keys, routes, modes and pairing. Paired agent tokens only
   access the agent API. Tokens have 256 bits of randomness and are stored as hashes
   inside the encrypted vault. Pairing codes expire after five minutes and are
-  consumed once. Owner sessions expire after eight hours or on lock/restart.
+  consumed once. Owner sessions last 24 hours by default or 30 days when the owner
+  explicitly remembers the device. Both end on lock or host restart; Sign out
+  removes the browser session.
 - API calls are restricted to the key's owner-configured HTTPS origin on port 443.
   DNS answers must all be public addresses. The connection pins an address while
   preserving TLS hostname verification. Redirects and environment proxies are
@@ -47,6 +49,9 @@ interface, encryption algorithm, or the presence of tests.
 - Memory zeroization is not guaranteed in Python or browsers. Swap, crash dumps,
   browser extensions, clipboard managers and clipboard sync are outside the vault's
   control. Clipboard compare-and-clear is best effort in browsers, not atomic.
+- The PWA cache and the desktop app's separate browser profile can retain static
+  interface files and owner-session cookies on that device. They do not contain
+  vault ciphertext or agent credentials, but are part of the local device boundary.
 - A provider is trusted to receive its key. Literal/common-format echo redaction
   helps with accidental disclosure; a malicious provider can encode a key in ways
   that evade it. Auto approve GET routes can still have side effects if the provider
@@ -56,7 +61,7 @@ interface, encryption algorithm, or the presence of tests.
   provider accepted or completed an operation.
 - The vault host must be online and unlocked. There is no offline replication,
   conflict resolution, rollback detection for user-restored backups, high availability,
-  hardware-backed isolation, multi-owner RBAC, or recovery backdoor in version 0.1.
+  hardware-backed isolation, multi-owner RBAC, or recovery backdoor.
 - Tailscale account security, tailnet grants, host patching and disk encryption
   remain the operator's responsibility. Sharing a tailnet is not sufficient to
   access keys: agent pairing or owner sign-in is still required.

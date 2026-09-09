@@ -12,6 +12,12 @@ def test_ssrf_denied(monkeypatch,ip):
     monkeypatch.setattr(socket,'getaddrinfo',lambda *a,**k:[(2,1,6,'',(ip,443))])
     with pytest.raises(NetworkError): network.perform({'origin':'https://example.com'},{})
 
+def test_dns_failure_is_sanitized_without_connection_attempt(monkeypatch):
+    monkeypatch.setattr(socket,'getaddrinfo',lambda *a,**k:(_ for _ in ()).throw(socket.gaierror('fixture DNS failure')))
+    monkeypatch.setattr(network,'PinnedHTTPS',lambda *a,**k:pytest.fail('connection should not be initialized after DNS failure'))
+    with pytest.raises(NetworkError,match='Provider connection failed; automatic retry disabled.'):
+        network.perform({'origin':'https://example.com'}, {})
+
 def test_dns_pinned_redirect_blocked_and_echo_redacted(monkeypatch):
     monkeypatch.setattr(socket,'getaddrinfo',lambda *a,**k:[(2,1,6,'',('93.184.216.34',443))])
     seen={}

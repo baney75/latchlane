@@ -5,11 +5,13 @@
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.1.1'
-latchlane start
+uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'
+latchlane install-app
 ```
 
-Your browser opens the setup screen. Create a passphrase, then add your first key. The passphrase is not stored by default. Keep it in your password manager; there is no reset backdoor.
+This installs and opens a dedicated Latchlane app window using a separate Chromium profile. It does not use your signed-in Vivaldi session. Later, open Latchlane from your Applications or Start Menu. Create a passphrase, then add your first key. The passphrase is not stored by default. Keep it in your password manager; there is no reset backdoor.
+
+For a technical host-only process, use `latchlane start`; use `latchlane app` to open its dedicated window. `latchlane install-app --no-open` installs the launcher without opening it.
 
 To install the agent skill:
 
@@ -33,7 +35,10 @@ The broker enforces these modes. Agent credentials cannot change modes, approve 
 
 ### Add a key without putting it in chat
 
-1. Choose **Add a key**. Enter a name and the provider’s exact API origin.
+1. Choose **Add a key**. Enter a name, the provider’s exact API origin, and its
+   required header and prefix. Latchlane can attach the value as a supported API-key
+   header, or as `Bearer ` or `Basic ` authentication. It never guesses a provider’s
+   header format.
 2. Choose **Watch next copy**, copy the API key, and return to the vault window. Supported browsers save the next changed value automatically when the form is complete.
 3. On browsers that block watching, use **Paste from clipboard** or paste into the masked field and choose **Encrypt & save**.
 
@@ -79,7 +84,9 @@ After pairing, add this stdio server to an MCP-capable agent:
 }
 ```
 
-The tools list key names, request a brokered API operation, and consume an approved request. The MCP surface never provides a raw-key retrieval tool.
+The tools list key names, request a brokered API operation, and consume an approved
+request. The MCP surface never provides a raw-key retrieval tool. Run `latchlane mcp`
+locally for the same stdio server and `latchlane mcp --help` for its CLI help.
 
 ## Your devices, connected
 
@@ -97,6 +104,8 @@ latchlane pair https://your-device.your-tailnet.ts.net:8447 --name 'Laptop agent
 
 Every device sees the same live vault and permissions. **Sync uses one online host, not offline replicas.** No credential database or decryption key is distributed to agent devices. The host must stay online and unlocked for agent operations.
 
+On phones and tablets, use the browser console and choose its install option when available. That installed web app still uses the same online host and owner session.
+
 Tailscale handles identity-provider sign-in in its own app/browser. Its separate [app OAuth](https://tailscale.com/docs/features/oauth-apps) is currently alpha and restricted to users within the app’s tailnet; Latchlane does not pretend there is a universal public OAuth app. You do not give Latchlane a Tailscale OAuth client secret. See [device setup](devices.md).
 
 ## Where it runs
@@ -108,11 +117,27 @@ Tailscale handles identity-provider sign-in in its own app/browser. Its separate
 | Headless server | Host using `latchlane init`, then `latchlane start --no-open` |
 | Other devices | Browser access if HTTPS and Tailscale are supported; no claim of a native host everywhere |
 
-Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.1 is an early public release, not an independently audited secrets manager.
+Host/CLI tests run in the repository’s macOS, Windows and Linux CI matrix. Browser layout tests cover desktop and mobile widths; this is not a physical-device certification. Version 0.2.0 is an early public release, not an independently audited secrets manager.
+
+The desktop app flow has live default-browser verification on macOS and Linux. Windows launcher support is provided, but Windows default-browser detection has not been verified for this release.
 
 ## Local options
 
-`latchlane doctor` checks readiness without revealing keys. `latchlane capture NAME --origin https://api.example.com` opens a named capture form. `latchlane start --port PORT` chooses a different local port.
+`latchlane doctor` checks the broker host and this agent’s pairing without revealing
+key values. It reports `agent_pairing_valid: true` only after the broker accepts the
+saved pairing; `false` means unpaired or revoked; `null` means it cannot verify the
+pairing, such as when the broker is locked or unavailable. It does not verify that a
+stored provider credential is still accepted by its provider.
+
+Use `latchlane doctor --url http://127.0.0.1:PORT` to check a host on a custom
+local port. For a passphrase vault on a custom port, open its console with
+`latchlane owner --url http://127.0.0.1:PORT`. `latchlane capture NAME --origin
+https://api.example.com --header X-API-Key --prefix none` opens a compact named capture form. Header and prefix are optional; omitted values keep the form defaults. `latchlane start --port PORT`
+chooses a different local port.
+
+Latchlane uses the supported default Chromium browser when it can identify one. If your default is Safari or Firefox, it will not substitute another browser. Run `latchlane owner`, then use Safari’s Add to Dock or keep the console open in Firefox.
+
+Choose a 24-hour or 30-day remembered owner session at sign-in. Both end when the vault locks or the host restarts. **Sign out** ends that browser session. Editing key metadata with an empty secret field keeps the current secret value.
 
 Advanced users can deliberately choose unattended operation:
 

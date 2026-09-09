@@ -1,23 +1,465 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#192c28"><title>Latchlane · Your keys. Your call.</title><link rel="icon" href="/assets/mark.svg"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body>
-<header><a class="brand" href="/" aria-label="Latchlane home"><img src="/assets/mark.svg" alt="" width="38" height="38">latchlane<span class="version">/ 01</span></a><div class="header-right"><span class="private"><i></i> Private by design</span><button id="lock" class="quiet hidden">Lock vault</button></div></header>
-<main>
-<section id="welcome" class="welcome">
-<div class="intro"><span class="eyebrow">A LITTLE TRUST. ON YOUR TERMS.</span><h1>Your keys.<br>Your agents.<br><em>Your call.</em></h1><p class="lede">Keep credentials out of the conversation.<br>Give your agents a private way to get to work.</p><div class="principles"><span>Encrypted on disk</span><span>No cloud vault</span><span>You set the pace</span></div></div>
-<div class="entry"><div class="entry-top"><span class="step">01 / YOUR PRIVATE SPACE</span><span class="motif" aria-hidden="true">↗</span></div><h2 id="entry-title">Make yourself at home.</h2><p id="entry-description">One passphrase protects your vault. You’ll start in Always ask, so every key use is your decision.</p><form id="login-form"><label for="password">Vault passphrase</label><input id="password" type="password" autocomplete="new-password" minlength="14" maxlength="1024" placeholder="At least 14 characters" required><div id="confirm-wrap"><label for="confirm">Once more, to be sure</label><input id="confirm" type="password" autocomplete="new-password" placeholder="Repeat your passphrase"></div><button id="enter" class="primary wide" type="submit">Create my vault <span>↗</span></button></form><p class="fine">Keep your passphrase somewhere safe. There is no password reset or recovery backdoor.</p></div>
-</section>
-<section id="dashboard" class="hidden">
-<div class="page-title"><div><span class="eyebrow">THE KEYS STAY HERE. THE WORK MOVES FORWARD.</span><h1>Your private workspace<span class="dot">.</span></h1></div><button class="primary" id="add">+ Add a key</button></div>
-<div class="mode-panel"><div><span class="eyebrow">YOUR PACE</span><h2>How much should agents ask?</h2><p>Change this any time. Only you control the mode.</p></div><div class="modes" role="group" aria-label="Agent permission mode"><button data-mode="ask"><span class="mode-number">01</span><strong>Always ask</strong><small>Every use comes to you.</small><span class="mode-state">Default</span></button><button data-mode="auto"><span class="mode-number">02</span><strong>Auto approve</strong><small>Trusted reads get a pass.</small><span class="mode-state">Exact rules</span></button><button data-mode="yolo"><span class="mode-number">03</span><strong>YOLO</strong><small>Paired agents can use all keys.</small><span class="mode-state">Full access</span></button></div></div>
-<div id="approvals" class="hidden"><div class="section-label"><h2>Waiting on your call</h2><span class="badge" id="pending-count"></span></div><div id="requests"></div></div>
-<div class="workspace-grid"><section class="key-section"><div class="section-label"><h2>Your keys <span id="key-count" class="count">0</span></h2><span class="subtle">Values stay hidden</span></div><div id="keys"></div></section><aside><section class="side-card"><span class="eyebrow">BRING YOUR AGENTS</span><h2>A seat at the table.</h2><p>Pair an agent or another computer. Revoke access whenever you need.</p><button id="pair" class="secondary wide">Pair an agent <span>↗</span></button><div id="pair-result" class="hidden"><p class="fine">One use · Expires in 5 minutes. Enter this locally in <code>latchlane pair</code>.</p><code id="pair-code"></code><button id="copy-pair" class="quiet">Copy pairing code</button></div><div id="clients"></div></section><section class="side-card sync-card"><span class="eyebrow">TAKE IT WITH YOU</span><h2>One vault. Your devices.</h2><p>Use Tailscale to keep your phone, computer, and agents connected privately.</p><button id="sync-guide" class="text-button">Set up private sync ↗</button></section></aside></div>
-<section class="activity"><div class="section-label"><h2>Recent activity</h2><span class="subtle">No key values or request bodies logged</span></div><div id="activity"></div></section>
-</section>
-</main>
-<footer><span>latchlane</span><span>Made for a little more peace of mind.</span><a href="https://github.com/baney75/latchlane" target="_blank" rel="noreferrer">Open source ↗</a></footer>
-<div id="notice" role="status" aria-live="polite" class="notice hidden"></div>
-<dialog id="key-dialog"><form id="key-form"><div class="dialog-head"><span class="eyebrow">A NEW KEY, A SAFE PLACE</span><button type="button" class="close" data-close="key-dialog" aria-label="Close">×</button></div><h2>Keep it out of chat.</h2><p>Name the key and its API destination. Then paste it here.</p><label for="key-name">Key name</label><input id="key-name" placeholder="my-service" pattern="[a-z0-9][a-z0-9_-]{0,63}" maxlength="64" required><label for="key-origin">API origin</label><input id="key-origin" type="url" placeholder="https://api.example.com" required><div class="two-cols"><div><label for="key-header">Authentication</label><select id="key-header"><option value="Authorization">Authorization</option><option>X-API-Key</option><option>API-KEY</option><option>api-key</option><option>x-goog-api-key</option></select></div><div><label for="key-prefix">Prefix</label><select id="key-prefix"><option value="Bearer ">Bearer</option><option value="">None</option><option value="Basic ">Basic</option></select></div></div><label for="key-value">Secret value</label><input id="key-value" type="password" autocomplete="off" spellcheck="false" maxlength="16384" required placeholder="Paste directly here"><div class="capture-row"><button type="button" id="clipboard" class="secondary">Paste from clipboard</button><button type="button" id="watch-copy" class="quiet">Watch next copy</button></div><p id="capture-state" class="fine">Clipboard access stays on this device. Paste manually if your browser blocks access.</p><details><summary>Trusted reads for Auto approve</summary><p class="fine">Only add routes you know are read-only. GET alone does not guarantee safety. One exact path per line; no query strings.</p><textarea id="safe-paths" rows="3" placeholder="/v1/models"></textarea></details><button class="primary wide" type="submit">Encrypt & save <span>↗</span></button><p class="fine">We’ll try to clear the copied value after saving, while preserving newer clipboard content. Clipboard history may retain a copy.</p></form></dialog>
-<dialog id="mode-dialog"><div class="dialog-head"><span class="eyebrow">YOU’RE IN CONTROL</span><button class="close" data-close="mode-dialog" aria-label="Close">×</button></div><h2 id="mode-title"></h2><p id="mode-description"></p><button id="confirm-mode" class="primary wide">Use this mode</button></dialog>
-<dialog id="sync-dialog"><div class="dialog-head"><span class="eyebrow">YOUR PRIVATE CONNECTION</span><button class="close" data-close="sync-dialog" aria-label="Close">×</button></div><h2>Bring your other devices.</h2><ol class="setup-steps"><li><strong>Get Tailscale</strong><p><a href="https://login.tailscale.com/start" target="_blank" rel="noreferrer">Create an account or sign in ↗</a>, then <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">install Tailscale</a> on each device.</p></li><li><strong>Connect the vault host</strong><p>On the computer running this vault, run <code>latchlane connect</code>. Tailscale opens its supported browser sign-in when needed.</p></li><li><strong>Open your private address</strong><p>The setup prints your private HTTPS address. Open it on your other devices, sign in with your vault passphrase, and pair your agents.</p></li></ol><p class="fine">All devices share the live vault on this host. Keep it online. Offline replicas are not created. Tailscale app OAuth is currently limited to a single tailnet; no shared OAuth secret is needed here.</p><button class="primary wide" data-close="sync-dialog">Got it</button></dialog>
-</body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#192c28" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>Latchlane · Your keys. Your call.</title>
+    <link rel="icon" href="/assets/mark.svg" />
+    <link rel="apple-touch-icon" href="/assets/icons/mark-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/" aria-label="Latchlane home"
+        ><img
+          src="/assets/mark.svg"
+          alt=""
+          width="38"
+          height="38"
+        />latchlane<span class="version">/ 01</span></a
+      >
+      <div class="header-right">
+        <span class="private"><i></i> Private by design</span
+        ><button id="retry" class="quiet hidden">Retry connection</button
+        ><button id="logout" class="quiet hidden">Sign out</button
+        ><button id="lock" class="quiet hidden">Lock vault</button>
+      </div>
+    </header>
+    <main>
+      <section id="welcome" class="welcome">
+        <div id="welcome-intro" class="intro">
+          <span class="eyebrow">A LITTLE TRUST. ON YOUR TERMS.</span>
+          <h1>Your keys.<br />Your agents.<br /><em>Your call.</em></h1>
+          <p class="lede">
+            Keep credentials out of the conversation.<br />Give your agents a
+            private way to get to work.
+          </p>
+          <div class="principles">
+            <span>Encrypted on disk</span><span>No cloud vault</span
+            ><span>You set the pace</span>
+          </div>
+        </div>
+        <div class="entry">
+          <div class="entry-top">
+            <span class="step">01 / YOUR PRIVATE SPACE</span
+            ><span class="motif" aria-hidden="true">↗</span>
+          </div>
+          <h2 id="entry-title">Make yourself at home.</h2>
+          <p id="entry-description">
+            One passphrase protects your vault. You’ll start in Always ask, so
+            every key use is your decision.
+          </p>
+          <form id="login-form">
+            <label for="password">Vault passphrase</label
+            ><input
+              id="password"
+              type="password"
+              autocomplete="new-password"
+              minlength="14"
+              maxlength="1024"
+              placeholder="At least 14 characters"
+              required
+            />
+            <div id="confirm-wrap">
+              <label for="confirm">Once more, to be sure</label
+              ><input
+                id="confirm"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Repeat your passphrase"
+              />
+            </div>
+            <fieldset id="session-choice">
+              <legend>Keep this app signed in</legend>
+              <label
+                ><input type="radio" name="session-mode" value="day" checked />
+                24 hours</label
+              ><label
+                ><input type="radio" name="session-mode" value="remember" />
+                Remember this device for 30 days</label
+              >
+            </fieldset>
+            <button id="enter" class="primary wide" type="submit">
+              Create my vault <span>↗</span>
+            </button>
+          </form>
+          <p class="fine">
+            Locking the vault or restarting its host requires your passphrase
+            again. Your passphrase is never saved here.
+          </p>
+        </div>
+      </section>
+      <section id="dashboard" class="hidden">
+        <div class="page-title">
+          <div>
+            <span class="eyebrow"
+              >THE KEYS STAY HERE. THE WORK MOVES FORWARD.</span
+            >
+            <h1>Your private workspace<span class="dot">.</span></h1>
+          </div>
+          <button class="primary" id="add">+ Add a key</button>
+        </div>
+        <div class="mode-panel">
+          <div>
+            <span class="eyebrow">YOUR PACE</span>
+            <h2>How much should agents ask?</h2>
+            <p>Change this any time. Only you control the mode.</p>
+          </div>
+          <div class="modes" role="group" aria-label="Agent permission mode">
+            <button data-mode="ask">
+              <span class="mode-number">01</span><strong>Always ask</strong
+              ><small>Every use comes to you.</small
+              ><span class="mode-state">Default</span></button
+            ><button data-mode="auto">
+              <span class="mode-number">02</span><strong>Auto approve</strong
+              ><small>Trusted reads get a pass.</small
+              ><span class="mode-state">Exact rules</span></button
+            ><button data-mode="yolo">
+              <span class="mode-number">03</span><strong>YOLO</strong
+              ><small>Paired agents can use all keys.</small
+              ><span class="mode-state">Full access</span>
+            </button>
+          </div>
+        </div>
+        <div id="approvals" class="hidden">
+          <div class="section-label">
+            <h2>Waiting on your call</h2>
+            <span class="badge" id="pending-count"></span>
+          </div>
+          <div id="requests"></div>
+        </div>
+        <div class="workspace-grid">
+          <section class="key-section">
+            <div class="section-label">
+              <h2>Your keys <span id="key-count" class="count">0</span></h2>
+              <span class="subtle">Values stay hidden</span>
+            </div>
+            <div id="keys"></div>
+          </section>
+          <aside>
+            <section class="side-card">
+              <span class="eyebrow">BRING YOUR AGENTS</span>
+              <h2>A seat at the table.</h2>
+              <p>
+                Pair an agent or another computer. Revoke access whenever you
+                need.
+              </p>
+              <button id="pair" class="secondary wide">
+                Pair an agent <span>↗</span>
+              </button>
+              <div id="pair-result" class="pair-result hidden">
+                <p class="fine">
+                  Run this command in that agent’s local terminal. The hidden
+                  prompt asks for the code; never paste it into chat.
+                </p>
+                <code id="pair-command"></code>
+                <div class="pair-actions">
+                  <button id="copy-pair-command" class="quiet">
+                    Copy pairing command</button
+                  ><span
+                    id="pair-expiry"
+                    class="subtle"
+                    aria-live="polite"
+                  ></span>
+                </div>
+                <p class="fine">Secret pairing code · one use only</p>
+                <code id="pair-code"></code
+                ><button id="copy-pair" class="quiet">Copy pairing code</button>
+              </div>
+              <div id="clients"></div>
+            </section>
+            <section class="side-card sync-card">
+              <span class="eyebrow">TAKE IT WITH YOU</span>
+              <h2>One vault. Your devices.</h2>
+              <p>
+                Install Latchlane as a private app window. It still connects
+                only to this vault host.
+              </p>
+              <button id="install-app" class="text-button">
+                Install Latchlane app ↗</button
+              ><button id="app-help" class="text-button">
+                How to install on this device ↗</button
+              ><button id="notifications" class="text-button">
+                Enable approval notifications
+              </button>
+              <p id="notification-status" class="fine">
+                Optional. While this app is open, a generic alert can tell you
+                approvals are waiting. No agent, key, or request details appear
+                in it.
+              </p>
+              <button id="sync-guide" class="text-button">
+                Set up private sync ↗</button
+              ><button id="mcp-guide" class="text-button">
+                Set up an MCP agent ↗
+              </button>
+            </section>
+          </aside>
+        </div>
+        <section class="activity">
+          <div class="section-label">
+            <h2>Recent activity</h2>
+            <span class="subtle">No key values or request bodies logged</span>
+          </div>
+          <div id="activity"></div>
+        </section>
+      </section>
+    </main>
+    <footer>
+      <span>latchlane</span><span>Made for a little more peace of mind.</span
+      ><a
+        href="https://github.com/baney75/latchlane"
+        target="_blank"
+        rel="noreferrer"
+        >Open source ↗</a
+      >
+    </footer>
+    <div
+      id="notice"
+      role="status"
+      aria-live="polite"
+      class="notice hidden"
+    ></div>
+    <dialog id="key-dialog">
+      <form id="key-form">
+        <div class="dialog-head">
+          <span class="eyebrow">A NEW KEY, A SAFE PLACE</span
+          ><button
+            type="button"
+            class="close"
+            data-close="key-dialog"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <h2 id="key-dialog-title">Keep it out of chat.</h2>
+        <p id="key-dialog-description">
+          Name the key and its API destination. Then paste it here.
+        </p>
+        <div id="key-fields">
+          <label for="key-name">Key name</label
+          ><input
+            id="key-name"
+            placeholder="my-service"
+            pattern="[a-z0-9][a-z0-9_-]{0,63}"
+            maxlength="64"
+            required
+          /><label for="key-origin">API origin</label
+          ><input
+            id="key-origin"
+            type="url"
+            placeholder="https://api.example.com"
+            required
+          />
+          <div class="two-cols">
+            <div>
+              <label for="key-header">Authentication</label
+              ><select id="key-header">
+                <option value="Authorization">Authorization</option>
+                <option>X-API-Key</option>
+                <option>API-KEY</option>
+                <option>api-key</option>
+                <option>x-goog-api-key</option>
+              </select>
+            </div>
+            <div>
+              <label for="key-prefix">Prefix</label
+              ><select id="key-prefix">
+                <option value="Bearer ">Bearer</option>
+                <option value="">None</option>
+                <option value="Basic ">Basic</option>
+              </select>
+            </div>
+          </div>
+          <label for="key-value">Secret value</label
+          ><input
+            id="key-value"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="16384"
+            required
+            placeholder="Paste directly here"
+          />
+          <div class="capture-row">
+            <button type="button" id="clipboard" class="secondary">
+              Paste from clipboard</button
+            ><button type="button" id="watch-copy" class="quiet">
+              Watch next copy
+            </button>
+          </div>
+          <p id="capture-state" class="fine">
+            Clipboard access stays on this device. Paste manually if your
+            browser blocks access.
+          </p>
+          <details>
+            <summary>Trusted reads for Auto approve</summary>
+            <p class="fine">
+              Only add routes you know are read-only. GET alone does not
+              guarantee safety. One exact path per line; no query strings.
+            </p>
+            <textarea
+              id="safe-paths"
+              rows="3"
+              placeholder="/v1/models"
+            ></textarea>
+          </details>
+          <button id="save-key" class="primary wide" type="submit">
+            Encrypt & save <span>↗</span>
+          </button>
+          <p class="fine">
+            We’ll try to clear the copied value after saving, while preserving
+            newer clipboard content. Clipboard history may retain a copy.
+          </p>
+        </div>
+        <div id="capture-success" class="hidden">
+          <p class="eyebrow">SAVED LOCALLY</p>
+          <h3>Encrypted and saved.</h3>
+          <p>
+            The value has been cleared from this window. You can add another key
+            or close this capture window.
+          </p>
+          <button id="capture-another" class="secondary" type="button">
+            Add another key
+          </button>
+          <button id="capture-done" class="primary" type="button">Done</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="mode-dialog">
+      <div class="dialog-head">
+        <span class="eyebrow">YOU’RE IN CONTROL</span
+        ><button class="close" data-close="mode-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <h2 id="mode-title"></h2>
+      <p id="mode-description"></p>
+      <button id="confirm-mode" class="primary wide">Use this mode</button>
+    </dialog>
+    <dialog id="sync-dialog">
+      <div class="dialog-head">
+        <span class="eyebrow">YOUR PRIVATE CONNECTION</span
+        ><button class="close" data-close="sync-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <h2>Bring your other devices.</h2>
+      <ol class="setup-steps">
+        <li>
+          <strong>Get Tailscale</strong>
+          <p>
+            <a
+              href="https://login.tailscale.com/start"
+              target="_blank"
+              rel="noreferrer"
+              >Create an account or sign in ↗</a
+            >, then
+            <a
+              href="https://tailscale.com/download"
+              target="_blank"
+              rel="noreferrer"
+              >install Tailscale</a
+            >
+            on each device.
+          </p>
+        </li>
+        <li>
+          <strong>Connect the vault host</strong>
+          <p>
+            On the computer running this vault, run
+            <code>latchlane connect</code>. Tailscale opens its supported
+            browser sign-in when needed.
+          </p>
+        </li>
+        <li>
+          <strong>Open your private address</strong>
+          <p>
+            The setup prints your private HTTPS address. Open it on your other
+            devices, sign in with your vault passphrase, and pair your agents.
+          </p>
+        </li>
+      </ol>
+      <p class="fine">
+        All devices share the live vault on this host. Keep it online. Offline
+        replicas are not created. Tailscale app OAuth is currently limited to a
+        single tailnet; no shared OAuth secret is needed here.
+      </p>
+      <button class="primary wide" data-close="sync-dialog">Got it</button>
+    </dialog>
+    <dialog id="mcp-dialog">
+      <div class="dialog-head">
+        <span class="eyebrow">MCP, WITHOUT THE SECRET</span
+        ><button class="close" data-close="mcp-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <h2>Connect a paired agent.</h2>
+      <p>
+        Pair this agent first with the command above. Then add this static local
+        command to its MCP configuration:
+      </p>
+      <pre class="setup-snippet">
+{
+  "mcpServers": {
+    "latchlane": {
+      "command": "latchlane",
+      "args": ["mcp"]
+    }
+  }
+}</pre
+      >
+      <p class="fine">
+        This setup contains no URL, pairing code, token, or key value. The
+        paired credential stays in that agent’s private local profile.
+      </p>
+      <button class="primary wide" data-close="mcp-dialog">Got it</button>
+    </dialog>
+    <dialog id="app-dialog">
+      <div class="dialog-head">
+        <span class="eyebrow">YOUR PRIVATE APP WINDOW</span
+        ><button class="close" data-close="app-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <h2>Install Latchlane.</h2>
+      <p>
+        Installing opens Latchlane in its own app window, so you do not need to
+        keep a browser tab around. It still needs this vault host online.
+      </p>
+      <ol class="setup-steps">
+        <li>
+          <strong>Chrome or Edge</strong>
+          <p>
+            Choose the install icon in the address bar, or use the browser menu
+            and choose Install app.
+          </p>
+        </li>
+        <li>
+          <strong>Safari on iPhone or iPad</strong>
+          <p>
+            Open this private address in Safari, choose Share, then Add to Home
+            Screen.
+          </p>
+        </li>
+        <li>
+          <strong>Safari on Mac</strong>
+          <p>Use File, then Add to Dock.</p>
+        </li>
+      </ol>
+      <p class="fine">
+        The app works while the host is reachable. If it is offline, it shows a
+        recovery screen instead of a cached vault page.
+      </p>
+      <button class="primary wide" data-close="app-dialog">Got it</button>
+    </dialog>
+  </body>
+</html>

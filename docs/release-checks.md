@@ -1,50 +1,33 @@
-# Version 0.1.1 verification
+# Version 0.2.0 release evidence
 
-The checks use disposable credentials and profiles. No private user vault was
-copied into this repository, test output, package or screenshot.
+## Observed locally
 
-## Local evidence
+- The complete Python suite passed: 65 tests, including deterministic concurrency
+  regressions.
+- The complete Chromium flow passed with disposable data: setup mismatch, pairing,
+  approve, deny, revoke, lock, key editing, 24-hour and 30-day sessions, compact
+  capture, and cache behavior.
+- Native Vivaldi app mode reported `display-mode: standalone`; the manifest and
+  installability checks reported no errors, and the service worker was active.
+- The macOS icon conversion produced a real `.icns`. Default-browser detection and
+  background fixture-host startup were exercised locally.
+- Dependency audit found no known vulnerabilities. Dependencies were unchanged.
+- Gitleaks found no secrets in the Git history, final staged changes, or extracted
+  release package.
 
-- Automated Python tests cover encrypted round trips and tampering, incorrect
-  passwords, default Always ask, owner/agent separation, Auto approve restrictions,
-  YOLO, one-use approval, expiry, denial, revocation, policy changes, lock, restart,
-  pairing replay, validation redaction, CSRF, Host validation and payload bounds.
-- Outbound tests cover private/local address rejection, DNS pinning, redirect
-  refusal and literal credential-echo redaction. They use a fixture connection;
-  they do not contact a real credential provider or spend API credits.
-- CLI tests launch a real local host, list keys, inject a disposable key into a
-  child process and exercise MCP initialize/tools/list. They check MCP cannot
-  return a raw lease created outside the MCP surface.
-- A real Chromium flow adds a disposable key, changes mode, pairs an agent,
-  approves one raw lease, and locks the vault. Layout checks cover 320, 390, 768
-  and 1280 CSS pixels. Screenshots in this directory are fixture-only.
-- Dependency auditing caught vulnerable older cryptography wheels; the release
-  requires cryptography 50.0.1 or later within major version 50. CI includes a
-  dependency-audit gate. A clean advisory scan is point-in-time evidence only.
-- The skill passes the native skill validator. The wheel and source distribution
-  build successfully. GitHub Actions repeats host tests on macOS, Windows and Linux
-  with Python 3.11 and 3.13, plus a Linux Chromium flow.
+The final Chromium suite passed after the clipboard cleanup correction. Native
+Vivaldi also passed first setup, remembered sign-in, and prefilled manual capture
+with immediate save confirmation. These checks used disposable vaults and profiles.
 
-## Scope
+## Release CI
 
-Local host/browser execution was on macOS. CI results are the evidence for other
-host operating systems. No physical iPhone, Android or Windows GUI was tested locally.
-Clipboard permission behavior varies by browser; manual masked paste is supported.
-The live OAuth consent flow was not tested with a new Tailscale account. The connector
-uses the installed Tailscale client and official account/install URLs.
+The [release workflow](https://github.com/baney75/latchlane/actions/workflows/test.yml)
+checks the platform matrix. No CI result is recorded here until that workflow runs
+for the release candidate.
 
-This was an implementation review and automated test pass, not an independent
-cryptographic audit. Read SECURITY.md for limits. Do not present this release as
-certified, universally compatible, or immune to malicious local agents.
+## Limits
 
-## Adversarial regression checks
-
-A separate security reviewer reproduced failed policy and approval saves, then
-verified that HTTP errors leave no extra access active in memory. A post-rename
-directory fsync failure was also tested: the API result and saved policy agree.
-Regression tests cover these failures and rejected key writes.
-
-The onboarding review exercises revoked-agent reconnection and visible errors
-inside the key-capture dialog. Replacement pairing preserves the old credential
-until the broker accepts a new code. Browser checks verify that the error is
-inside the active dialog and is not covered by another element.
+Remembered owner sessions end on vault lock or host restart. Safari and Firefox use
+manual desktop-install guidance. Physical mobile-device behavior and Windows GUI
+behavior were not tested locally. Latchlane is not an independently audited secrets
+manager; see `SECURITY.md` for the trust boundary and recovery limits.

@@ -18,6 +18,7 @@ import httpx
 import uvicorn
 from filelock import FileLock, Timeout
 from platformdirs import user_data_path
+from . import __version__
 from .vault import Vault, VaultError, private_directory, private_read, atomic_write
 
 PORT = 9473
@@ -43,11 +44,49 @@ def broker_url(value):
     p = urlsplit(value)
     if p.username or p.password or p.query or p.fragment or p.path not in ("", "/"):
         raise ValueError("Use only the broker origin, without a path or credentials.")
+    try:
+        p.port
+    except ValueError:
+        raise ValueError("Use a valid broker port.") from None
     if p.scheme == "http" and p.hostname in ("127.0.0.1", "localhost"):
         return value.rstrip("/")
     if p.scheme == "https" and p.hostname and p.hostname.endswith(".ts.net"):
         return value.rstrip("/")
     raise ValueError("Use local HTTP or your private https://device.tailnet.ts.net address.")
+
+
+def network_error(error, outcome_uncertain=False):
+    if isinstance(error, httpx.TimeoutException):
+        message = "Broker did not respond in time. Check that it is running."
+    elif isinstance(error, httpx.ConnectError):
+        message = "Cannot reach the broker. Check its address, network connection, and Tailscale if used."
+    else:
+        message = "Could not contact the broker. Check its address and network connection."
+    if outcome_uncertain:
+        message += " The operation may have reached the broker; check the owner console and provider state before retrying."
+    return ValueError(message)
+
+
+def broker_error(status, path=""):
+    if status == 401:
+        return ValueError("Agent is unpaired or revoked. Pair again from the owner console.")
+    if status == 403:
+        if path.endswith("/consume"):
+            return ValueError("Approval was denied or already consumed. Create a new request if access is still needed.")
+        return ValueError("Broker denied the operation. An approval or pairing code may have expired; ask the owner to create a fresh one.")
+    if status == 404:
+        return ValueError("Broker no longer recognizes that key or request. It may have expired or already been consumed.")
+    if status == 410:
+        return ValueError("Approval expired. Create a new request; Latchlane will not retry it automatically.")
+    if status == 423:
+        return ValueError("Vault locked. Open the owner console to unlock it.")
+    if status in (502, 503, 504):
+        return ValueError("The provider could not be reached or its response was uncertain. Check provider state before retrying.")
+    if status == 429:
+        return ValueError("Broker is busy. Wait for pending requests to expire, then try again.")
+    if status == 422:
+        return ValueError("Broker rejected the request format. Check the command arguments and try again.")
+    return ValueError(f"Broker declined the operation (HTTP {status}). Check the owner console.")
 
 
 class Client:
@@ -58,14 +97,120 @@ class Client:
         self.token = config["token"]
 
     def call(self, method, path, body=None):
-        with httpx.Client(timeout=30, trust_env=False, follow_redirects=False) as c:
-            r = c.request(method, self.url + path, json=body, headers={"Authorization":"Bearer " + self.token, "X-Latchlane":"1"})
+        try:
+            with httpx.Client(timeout=30, trust_env=False, follow_redirects=False) as c:
+                r = c.request(method, self.url + path, json=body, headers={"Authorization":"Bearer " + self.token, "X-Latchlane":"1"})
+        except httpx.HTTPError as e:
+            raise network_error(e, outcome_uncertain=method.upper() not in ("GET", "HEAD")) from None
         if r.status_code >= 300:
-            # Only known broker error strings, never dump bodies or headers.
-            if r.status_code == 423: raise ValueError("Vault locked. Open the owner console to unlock it.")
-            if r.status_code == 401: raise ValueError("Agent is unpaired or revoked. Pair again from the owner console.")
-            raise ValueError(f"Broker declined the operation (HTTP {r.status_code}). Check the owner console.")
-        return r.json()
+            raise broker_error(r.status_code, path)
+        try:
+            return r.json()
+        except ValueError:
+            message = "Broker returned an invalid response. Check the broker."
+            if method.upper() not in ("GET", "HEAD"):
+                message += " The operation may have reached the broker; check the owner console and provider state before retrying."
+            raise ValueError(message) from None
+
+
+def probe_broker(url, token=None):
+    """Return secret-free readiness facts. This only reads status and key names."""
+    result = {"broker_reachable": None, "broker_state": "unavailable", "broker_version": None}
+    try:
+        with httpx.Client(timeout=3, trust_env=False, follow_redirects=False) as c:
+            status = c.get(url + "/api/status")
+            if status.status_code != 200:
+                result["broker_reachable"] = False
+                result["broker_state"] = f"http_{status.status_code}"
+                return result
+            payload = status.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("initialized"), bool) or not isinstance(payload.get("locked"), bool) or not isinstance(payload.get("version"), str):
+                result["broker_reachable"] = False
+                result["broker_state"] = "invalid_response"
+                return result
+            result["broker_reachable"] = True
+            result["broker_version"] = payload["version"]
+            if not payload.get("initialized"):
+                result["broker_state"] = "not_initialized"
+            elif payload.get("locked"):
+                result["broker_state"] = "locked"
+            else:
+                result["broker_state"] = "ready"
+            if token is None:
+                return result
+            pairing = c.get(url + "/api/keys", headers={"Authorization": "Bearer " + token, "X-Latchlane": "1"})
+    except httpx.HTTPError:
+        return result
+    except (TypeError, ValueError):
+        result["broker_reachable"] = False
+        result["broker_state"] = "invalid_response"
+        return result
+
+    if pairing.status_code == 200:
+        try:
+            names = pairing.json()
+        except ValueError:
+            names = None
+        if isinstance(names, dict) and isinstance(names.get("keys"), list):
+            result["agent_pairing_valid"] = True
+            result["agent_pairing_state"] = "valid"
+        else:
+            result["agent_pairing_valid"] = None
+            result["agent_pairing_state"] = "unavailable_invalid_response"
+    elif pairing.status_code == 401:
+        result["agent_pairing_valid"] = False
+        result["agent_pairing_state"] = "revoked_or_unpaired"
+    elif pairing.status_code == 423:
+        result["agent_pairing_valid"] = None
+        result["agent_pairing_state"] = "unavailable_vault_locked"
+    else:
+        result["agent_pairing_valid"] = None
+        result["agent_pairing_state"] = "unavailable"
+    return result
+
+
+def doctor(args):
+    root = data_dir()
+    profile = root / "agent.local.json"
+    result = {
+        # Preserve these established fields for scripts that consume doctor output.
+        "vault_exists": (root / "store.vault").exists(),
+        "agent_paired": profile.exists(),
+        "unattended": (root / "unattended.key").exists(),
+        "tailscale_installed": bool(tailscale_bin()),
+        "tailscale_connected": tail_status().get("BackendState") == "Running",
+    }
+    url = broker_url(args.url) if args.url else None
+    token = None
+    if profile.exists():
+        try:
+            config = json.loads(private_read(profile))
+            profile_url = broker_url(config["url"])
+            profile_token = config["token"]
+            if not isinstance(profile_token, str) or not profile_token:
+                raise ValueError("Invalid agent profile.")
+        except (KeyError, TypeError, ValueError, OSError):
+            result.update({"agent_pairing_valid": False, "agent_pairing_state": "invalid_profile"})
+            profile_url = None
+        else:
+            if url and url != profile_url:
+                result.update({"agent_pairing_valid": False, "agent_pairing_state": "profile_url_mismatch"})
+            else:
+                url = url or profile_url
+                token = profile_token
+                result.update({"agent_pairing_valid": None, "agent_pairing_state": "unavailable"})
+    else:
+        result.update({"agent_pairing_valid": False, "agent_pairing_state": "not_configured"})
+        url = url or f"http://127.0.0.1:{PORT}"
+
+    if url:
+        result.update(probe_broker(url, token))
+        if token is None and result["agent_pairing_state"] == "not_configured":
+            # The broker can be ready even though this machine has no pairing.
+            result["agent_pairing_valid"] = False
+    else:
+        result.update({"broker_reachable": None, "broker_state": "not_configured"})
+    print(json.dumps(result, indent=2))
 
 
 def wait_operation(client, operation):
@@ -179,9 +324,12 @@ def pair(args):
     try:
         with httpx.Client(timeout=15,trust_env=False,follow_redirects=False) as c:
             r=c.post(url+"/api/pair",json={"code":code,"name":args.name},headers={"X-Latchlane":"1"})
-        if r.status_code!=200: raise ValueError("Pairing failed. Generate a fresh code in the owner console.")
+    except httpx.HTTPError as e: raise network_error(e, outcome_uncertain=True) from None
+    if r.status_code != 200: raise broker_error(r.status_code, "/api/pair")
+    try:
         token=r.json()["token"]
-    except httpx.HTTPError: raise ValueError("Cannot reach that vault. Check Tailscale and the address.") from None
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Broker returned an invalid pairing response. It may have accepted the code; check the owner console before retrying.") from None
     atomic_write(root/"agent.local.json",json.dumps({"url":url,"token":token}).encode())
     print("Paired. Credential saved locally; its value was not displayed.")
 
@@ -198,7 +346,7 @@ def mcp():
             msg=json.loads(line)
             if "id" not in msg: continue
             method=msg.get("method")
-            if method=="initialize": result={"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"latchlane","version":"0.1.1"}}
+            if method=="initialize": result={"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"latchlane","version":__version__}}
             elif method=="ping": result={}
             elif method=="tools/list": result={"tools":tools}
             elif method=="tools/call":
@@ -223,6 +371,7 @@ def mcp():
 
 def main():
     p=argparse.ArgumentParser(prog="latchlane",description="Your keys. Your agents. Your call.")
+    p.add_argument("--version", action="version", version=__version__)
     sub=p.add_subparsers(dest="command",required=True)
     s=sub.add_parser("start",help="Start your vault and open the owner console");s.add_argument("--port",type=int,default=PORT);s.add_argument("--no-open",action="store_true");s.add_argument("--initial-mode",choices=["ask","auto","yolo"],default="ask",help="Explicit first-setup mode; defaults to Always ask")
     s=sub.add_parser("init",help="Initialize from a terminal (start gives a browser setup)");s.add_argument("--mode",choices=["ask","auto","yolo"],default="ask");s.add_argument("--unattended",action="store_true",help="Store a local unlock file; readable by this OS user")
@@ -231,11 +380,13 @@ def main():
     sub.add_parser("keys",help="List names without revealing values")
     s=sub.add_parser("request",help="Make an authenticated API request");s.add_argument("key");s.add_argument("path");s.add_argument("--method",default="GET");s.add_argument("--purpose",required=True);s.add_argument("--body-file",type=Path)
     s=sub.add_parser("run",help="Request a raw key and pass it to one trusted child process");s.add_argument("key");s.add_argument("variable");s.add_argument("--purpose",required=True);s.add_argument("argv",nargs=argparse.REMAINDER)
-    s=sub.add_parser("capture",help="Open the owner’s named clipboard capture form");s.add_argument("name");s.add_argument("--origin",default="");s.add_argument("--url",default=f"http://127.0.0.1:{PORT}")
+    s=sub.add_parser("capture",help="Open the owner’s named clipboard capture form");s.add_argument("name");s.add_argument("--origin",default="");s.add_argument("--header",choices=["Authorization","X-API-Key","API-KEY","api-key","x-goog-api-key"]);s.add_argument("--prefix",choices=["none","bearer","basic"]);s.add_argument("--url",default=f"http://127.0.0.1:{PORT}")
     sub.add_parser("mcp",help="Run the MCP stdio server for a paired agent")
     s=sub.add_parser("install-skill",help="Install the bundled skill for Codex or another agent");s.add_argument("--directory",type=Path,default=Path.home()/".codex/skills/latchlane")
-    sub.add_parser("owner",help="Open the local owner console; unattended sessions require a host restart after ticket use")
-    sub.add_parser("doctor",help="Check local readiness without reading key values")
+    s=sub.add_parser("owner",help="Open the local owner console; use --url for a custom port");s.add_argument("--url",help="Local or private broker origin, for example http://127.0.0.1:9474")
+    s=sub.add_parser("doctor",help="Check local readiness without reading key values");s.add_argument("--url",help="Local or private broker origin to probe")
+    s=sub.add_parser("app",help="Open Latchlane in a dedicated app window");s.add_argument("--url",default=f"http://127.0.0.1:{PORT}",help="Local or private broker origin")
+    s=sub.add_parser("install-app",help="Install a per-user Latchlane app launcher");s.add_argument("--url",default=f"http://127.0.0.1:{PORT}",help="Local or private broker origin");s.add_argument("--no-open",action="store_true",help="Install without opening the app")
     args=p.parse_args()
     try:
         if args.command=="start": start(args)
@@ -255,15 +406,27 @@ def main():
             sys.exit(subprocess.run(argv,env=env).returncode)
         elif args.command=="capture":
             if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",args.name): raise ValueError("Use a lowercase key name.")
-            url=broker_url(args.url)+"/?"+urlencode({"capture":args.name,"origin":args.origin})
-            webbrowser.open(url);print("Capture form opened. Sign in, confirm the destination, then choose Watch next copy. Do not paste secrets into chat.")
+            from .desktop import app
+            prefix={"none":"", "bearer":"Bearer ", "basic":"Basic "}.get(args.prefix)
+            app(args, capture=(args.name, args.origin, args.header, prefix));print("Capture window opened. Sign in, confirm the destination, then choose Watch next copy. Do not paste secrets into chat.")
         elif args.command=="owner":
-            ticket=data_dir()/"owner-ticket.local.json"
-            if ticket.exists():
-                webbrowser.open(json.loads(private_read(ticket))["url"])
-                print("Owner window opened. If the one-use session expired, restart the host to issue a fresh one.")
+            if args.url:
+                webbrowser.open(broker_url(args.url) + "/")
+                print("Owner window opened.")
             else:
-                webbrowser.open(f"http://127.0.0.1:{PORT}/")
+                ticket=data_dir()/"owner-ticket.local.json"
+                if ticket.exists():
+                    try:
+                        ticket_url=json.loads(private_read(ticket))["url"]
+                        ticket_origin=broker_url(urlsplit(ticket_url)._replace(path="", query="", fragment="").geturl())
+                    except (KeyError, TypeError, ValueError, OSError):
+                        raise ValueError("Owner ticket is invalid. Restart the host, or use latchlane owner --url with its current address.") from None
+                    if probe_broker(ticket_origin)["broker_reachable"] is not True:
+                        raise ValueError("Owner ticket is stale or its host is unavailable. Restart the host, or use latchlane owner --url with its current address.")
+                    webbrowser.open(ticket_url)
+                    print("Owner window opened. If the one-use session expired, restart the host to issue a fresh one.")
+                else:
+                    webbrowser.open(f"http://127.0.0.1:{PORT}/")
         elif args.command=="mcp": mcp()
         elif args.command=="install-skill":
             source=Path(__file__).with_name("SKILL.md")
@@ -271,8 +434,13 @@ def main():
             dest=args.directory/"SKILL.md"
             if dest.exists(): raise ValueError("Skill exists. Review and update it deliberately.")
             args.directory.mkdir(parents=True,exist_ok=True);dest.write_text(source.read_text());print("Latchlane skill installed.")
-        else:
-            root=data_dir();print(json.dumps({"vault_exists":(root/"store.vault").exists(),"agent_paired":(root/"agent.local.json").exists(),"unattended":(root/"unattended.key").exists(),"tailscale_installed":bool(tailscale_bin()),"tailscale_connected":tail_status().get("BackendState")=="Running"},indent=2))
+        elif args.command=="doctor": doctor(args)
+        elif args.command=="app":
+            from .desktop import app
+            app(args)
+        elif args.command=="install-app":
+            from .desktop import install_app
+            install_app(args)
     except (ValueError,VaultError,Timeout,FileNotFoundError) as e:
         print(str(e) if not isinstance(e,FileNotFoundError) else "Not set up yet. Run latchlane start or latchlane pair.",file=sys.stderr);sys.exit(1)
     except KeyboardInterrupt: pass

@@ -33,8 +33,9 @@ Give your agent this prompt:
 
 ```text
 Set up Latchlane using https://github.com/baney75/latchlane
-and its skills/latchlane/SKILL.md. Install the CLI and skill,
-then guide me through creating a vault and pairing my agent.
+and its skills/latchlane/SKILL.md. Install the CLI and skill, run
+latchlane install-app, then open it with latchlane app if needed.
+Guide me through creating a vault and pairing my agent.
 Keep Always ask on unless I choose otherwise. I will enter
 passphrases and keys locally, never in chat. Ask whether I
 want to connect my other devices through Tailscale.
@@ -43,11 +44,13 @@ want to connect my other devices through Tailscale.
 Or start it yourself with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+:
 
 ```sh
-uv tool install 'git+https://github.com/baney75/latchlane@v0.1.1'
-latchlane start
+uv tool install 'git+https://github.com/baney75/latchlane@v0.2.0'
+latchlane install-app
 ```
 
-Your browser opens the vault setup. Create a passphrase, choose **Add a key**, name it, and choose **Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when the form is complete. Browsers that block clipboard watching offer a masked paste field. [Continue to agent pairing →](docs/getting-started.md#pair-an-agent)
+Latchlane installs and opens a dedicated app window with its own browser profile. Create a passphrase, choose **Add a key**, name it, and choose **Watch next copy**. Copy your key and return to the window; Latchlane encrypts it when the form is complete. Browsers that block clipboard watching offer a masked paste field. Later, open the Latchlane launcher from your Applications or Start Menu. If the default browser is Safari or Firefox, use `latchlane owner`, then add the console to Safari’s Dock or use it in Firefox. Latchlane will not substitute another browser. [Technical host setup →](docs/getting-started.md#start-here)
+
+Choose a 24-hour or 30-day remembered owner session at sign-in; both end on lock or host restart. An agent can open a compact owner-visible capture window with `latchlane capture NAME --origin HTTPS_ORIGIN`, optionally prefilling the authentication header and prefix. The agent never receives the secret value.
 
 ## You choose how often agents ask
 
@@ -74,7 +77,7 @@ The [MCP integration](docs/getting-started.md#mcp) exposes the same brokered wor
 
 ## One vault, across your devices
 
-Run `latchlane connect` for guided Tailscale installation, browser sign-in, and private HTTPS. Use the console from a phone or pair an agent on another computer. This connects to **one online vault host**; it does not make offline copies of your secrets.
+Run `latchlane connect` for guided Tailscale installation, browser sign-in, and private HTTPS. Use the console from a phone or pair an agent on another computer. On a phone or tablet, open the console in a browser and use its install option when available. This connects to **one online vault host**; it does not make offline copies of your secrets.
 
 The host and CLI support macOS, Windows, and Linux. Phones and tablets use the browser console with an explicit paste fallback. [Device setup and requirements →](docs/devices.md)
 
